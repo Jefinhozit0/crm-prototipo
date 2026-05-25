@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+
+<html class="light" lang="pt-BR"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>WealthVision - Client Proposal Approval</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<style type="text/tailwindcss">
+        @layer utilities {
+            .material-symbols-outlined {
+                font-family: 'Material Symbols Outlined';
+                font-weight: normal;
+                font-style: normal;
+                font-size: 24px;
+                line-height: 1;
+                letter-spacing: normal;
+                text-transform: none;
+                display: inline-block;
+                white-space: nowrap;
+                word-wrap: normal;
+                direction: ltr;
+                -webkit-font-feature-settings: 'liga';
+                -webkit-font-smoothing: antialiased;
+            }
+            .donut-chart {
+                background: conic-gradient(
+                    #002147 0% 45%, /* primary-container */
+                    #aec7f6 45% 75%, /* primary-fixed-dim */
+                    #b7c8e1 75% 100% /* tertiary-fixed-dim */
+                );
+                border-radius: 50%;
+                position: relative;
+            }
+            .donut-hole {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background-color: #ffffff;
+                border-radius: 50%;
+            }
+            
+            /* Custom Scrollbar for Legal Text */
+            .legal-scroll::-webkit-scrollbar {
+                width: 6px;
+            }
+            .legal-scroll::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .legal-scroll::-webkit-scrollbar-thumb {
+                background-color: #c4c6cf;
+                border-radius: 10px;
+            }
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "inverse-on-surface": "#eff1f4",
+                        "tertiary-fixed-dim": "#b7c8e1",
+                        "primary-container": "#002147",
+                        "tertiary-fixed": "#d3e4fe",
+                        "on-tertiary-container": "#7a8aa2",
+                        "on-tertiary-fixed-variant": "#38485d",
+                        "on-primary-container": "#708ab5",
+                        "error-container": "#ffdad6",
+                        "error": "#ba1a1a",
+                        "on-secondary-container": "#007327",
+                        "secondary-container": "#80f98b",
+                        "primary": "#000a1e",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed": "#d6e3ff",
+                        "on-secondary-fixed-variant": "#00531a",
+                        "tertiary": "#000b1b",
+                        "inverse-primary": "#aec7f6",
+                        "surface-container-lowest": "#ffffff",
+                        "on-error": "#ffffff",
+                        "tertiary-container": "#122236",
+                        "on-tertiary": "#ffffff",
+                        "background": "#f7f9fc",
+                        "surface-container": "#eceef1",
+                        "outline-variant": "#c4c6cf",
+                        "surface-dim": "#d8dadd",
+                        "outline": "#74777f",
+                        "surface-container-highest": "#e0e3e6",
+                        "on-background": "#191c1e",
+                        "on-secondary-fixed": "#002106",
+                        "surface": "#f7f9fc",
+                        "on-tertiary-fixed": "#0b1c30",
+                        "inverse-surface": "#2d3133",
+                        "secondary": "#006e25",
+                        "on-surface-variant": "#44474e",
+                        "on-primary-fixed": "#001b3d",
+                        "secondary-fixed-dim": "#66df75",
+                        "on-surface": "#191c1e",
+                        "surface-tint": "#465f88",
+                        "primary-fixed-dim": "#aec7f6",
+                        "on-error-container": "#93000a",
+                        "surface-bright": "#f7f9fc",
+                        "on-primary": "#ffffff",
+                        "secondary-fixed": "#83fc8e",
+                        "surface-variant": "#e0e3e6",
+                        "surface-container-high": "#e6e8eb",
+                        "on-primary-fixed-variant": "#2d476f",
+                        "surface-container-low": "#f2f4f7"
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.25rem",
+                        lg: "0.5rem",
+                        xl: "0.75rem",
+                        full: "9999px"
+                    },
+                    spacing: {
+                        gutter: "1.5rem",
+                        "stack-sm": "1rem",
+                        "margin-mobile": "1rem",
+                        "margin-desktop": "2.5rem",
+                        "container-max": "1440px",
+                        "stack-lg": "2rem",
+                        "stack-md": "1.5rem",
+                        "stack-xs": "0.5rem"
+                    },
+                    fontFamily: {
+                        "numeric-data": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-xl": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "body-md": ["Inter"]
+                    },
+                    fontSize: {
+                        "numeric-data": ["15px", { lineHeight: "20px", fontWeight: "500" }],
+                        "body-sm": ["13px", { lineHeight: "18px", fontWeight: "400" }],
+                        "body-lg": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+                        "headline-xl": ["32px", { lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "600" }],
+                        "label-caps": ["12px", { lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "700" }],
+                        "headline-lg": ["24px", { lineHeight: "32px", letterSpacing: "-0.01em", fontWeight: "600" }],
+                        "headline-md": ["20px", { lineHeight: "28px", fontWeight: "500" }],
+                        "body-md": ["14px", { lineHeight: "20px", fontWeight: "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background min-h-screen flex flex-col text-on-surface antialiased">
+<!-- Client View Top Nav (Simplified, No App Navigation) -->
+<header class="bg-surface-container-lowest/90 backdrop-blur-md sticky top-0 z-40 border-b border-outline-variant flex items-center h-20 px-gutter">
+<div class="max-w-container-max mx-auto w-full flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="account_balance" style="font-variation-settings: 'FILL' 1;">account_balance</span>
+<span class="font-headline-md text-headline-md font-bold text-primary tracking-tight">WealthVision</span>
+</div>
+<div class="flex items-center gap-4">
+<span class="font-body-sm text-body-sm text-on-surface-variant hidden md:block">Atendimento Privado</span>
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-label-caps text-label-caps">ES</div>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-grow w-full max-w-container-max mx-auto px-gutter py-margin-desktop space-y-stack-lg">
+<!-- Welcome Hero -->
+<section class="max-w-3xl">
+<h1 class="font-headline-xl text-headline-xl text-on-surface mb-2">Olá, Eleanor.</h1>
+<p class="font-headline-lg text-headline-lg text-on-surface-variant font-normal">Sua nova proposta de investimento está pronta para revisão.</p>
+</section>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-stack-lg">
+<!-- Highlight / Rationale (Col 1-5) -->
+<div class="lg:col-span-5 bg-surface-container-lowest border border-outline-variant rounded-xl p-8 flex flex-col justify-between">
+<div>
+<h2 class="font-headline-md text-headline-md text-on-surface mb-stack-md">Por que esta mudança?</h2>
+<ul class="space-y-stack-md">
+<li class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-primary" data-icon="trending_up">trending_up</span>
+</div>
+<div>
+<h3 class="font-numeric-data text-numeric-data text-on-surface">Maior Potencial de Retorno</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">Ajuste tático visando capturar o prêmio de risco em ativos selecionados de tecnologia e infraestrutura.</p>
+</div>
+</li>
+<li class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-primary" data-icon="shield">shield</span>
+</div>
+<div>
+<h3 class="font-numeric-data text-numeric-data text-on-surface">Menor Volatilidade Global</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">Aumento da parcela em renda fixa internacional para proteger o portfólio contra flutuações de curto prazo.</p>
+</div>
+</li>
+<li class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-secondary" data-icon="eco" style="font-variation-settings: 'FILL' 1;">eco</span>
+</div>
+<div>
+<h3 class="font-numeric-data text-numeric-data text-on-surface">Alinhamento ESG</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">Transição de 15% do capital para fundos de impacto ambiental e governança corporativa premium.</p>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<!-- Visualization / Allocation (Col 6-12) -->
+<div class="lg:col-span-7 bg-surface-container-lowest border border-outline-variant rounded-xl p-8 flex flex-col md:flex-row items-center gap-8">
+<div class="flex-1 w-full flex flex-col justify-center">
+<h2 class="font-headline-md text-headline-md text-on-surface mb-stack-md">Nova Alocação Proposta</h2>
+<!-- Chart Legend -->
+<div class="space-y-4 w-full">
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface hover:bg-surface-container transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-primary-container"></div>
+<span class="font-body-md text-body-md text-on-surface font-medium">Renda Variável Global</span>
+</div>
+<span class="font-numeric-data text-numeric-data text-on-surface">45%</span>
+</div>
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface hover:bg-surface-container transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-primary-fixed-dim"></div>
+<span class="font-body-md text-body-md text-on-surface font-medium">Renda Fixa Privada</span>
+</div>
+<span class="font-numeric-data text-numeric-data text-on-surface">30%</span>
+</div>
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface hover:bg-surface-container transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-tertiary-fixed-dim"></div>
+<span class="font-body-md text-body-md text-on-surface font-medium">Ativos Alternativos / ESG</span>
+</div>
+<span class="font-numeric-data text-numeric-data text-on-surface">25%</span>
+</div>
+</div>
+</div>
+<!-- CSS Donut Chart -->
+<div class="w-64 h-64 flex-shrink-0 donut-chart shadow-sm">
+<div class="donut-hole w-48 h-48 flex flex-col items-center justify-center text-center">
+<span class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider mb-1">Patrimônio Total</span>
+<span class="font-headline-lg text-headline-lg text-primary font-bold">R$ 12.4M</span>
+</div>
+</div>
+</div>
+<!-- Legal & Action Footer (Full Width) -->
+<div class="lg:col-span-12 flex flex-col md:flex-row gap-stack-lg mt-stack-sm items-end">
+<!-- Legal Text Box -->
+<div class="flex-1 bg-surface-container-low border border-outline-variant rounded-lg p-4 h-32 overflow-y-auto legal-scroll">
+<h4 class="font-label-caps text-label-caps text-on-surface mb-2">Termos e Condições / Suitability</h4>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-2">
+                        Declaro que li e compreendi a lâmina de informações essenciais, o regulamento e as políticas de investimento propostas. Estou ciente de que as rentabilidades passadas não representam garantia de rentabilidade futura e que os investimentos apresentados podem apresentar riscos inerentes aos mercados financeiros.
+                    </p>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                        Esta proposta foi estruturada com base no seu Perfil de Investidor (Agressivo/Sofisticado) atualizado em 12/10/2023. Ao aprovar, você autoriza seu assessor a executar as ordens de realocação nos mercados pertinentes.
+                    </p>
+</div>
+<!-- Actions -->
+<div class="flex flex-col sm:flex-row gap-4 w-full md:w-auto flex-shrink-0">
+<button class="px-6 py-3 rounded-full border border-outline text-primary font-label-caps text-label-caps hover:bg-surface-container-low transition-colors duration-200 flex items-center justify-center">
+                        Rejeitar e Comentar
+                    </button>
+<button class="px-8 py-3 rounded-full bg-secondary text-on-secondary font-label-caps text-label-caps hover:bg-secondary/90 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]" data-icon="fingerprint">fingerprint</span>
+                        Aprovar Carteira
+                    </button>
+</div>
+</div>
+</div>
+</main>
+</body></html>

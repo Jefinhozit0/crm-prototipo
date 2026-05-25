@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+
+<html lang="pt-BR"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Confirmação - WealthVision</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "inverse-on-surface": "#eff1f4",
+                        "tertiary-fixed-dim": "#b7c8e1",
+                        "primary-container": "#002147",
+                        "tertiary-fixed": "#d3e4fe",
+                        "on-tertiary-container": "#7a8aa2",
+                        "on-tertiary-fixed-variant": "#38485d",
+                        "on-primary-container": "#708ab5",
+                        "error-container": "#ffdad6",
+                        "error": "#ba1a1a",
+                        "on-secondary-container": "#007327",
+                        "secondary-container": "#80f98b",
+                        "primary": "#000a1e",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed": "#d6e3ff",
+                        "on-secondary-fixed-variant": "#00531a",
+                        "tertiary": "#000b1b",
+                        "inverse-primary": "#aec7f6",
+                        "surface-container-lowest": "#ffffff",
+                        "on-error": "#ffffff",
+                        "tertiary-container": "#122236",
+                        "on-tertiary": "#ffffff",
+                        "background": "#f7f9fc",
+                        "surface-container": "#eceef1",
+                        "outline-variant": "#c4c6cf",
+                        "surface-dim": "#d8dadd",
+                        "outline": "#74777f",
+                        "surface-container-highest": "#e0e3e6",
+                        "on-background": "#191c1e",
+                        "on-secondary-fixed": "#002106",
+                        "surface": "#f7f9fc",
+                        "on-tertiary-fixed": "#0b1c30",
+                        "inverse-surface": "#2d3133",
+                        "secondary": "#006e25",
+                        "on-surface-variant": "#44474e",
+                        "on-primary-fixed": "#001b3d",
+                        "secondary-fixed-dim": "#66df75",
+                        "on-surface": "#191c1e",
+                        "surface-tint": "#465f88",
+                        "primary-fixed-dim": "#aec7f6",
+                        "on-error-container": "#93000a",
+                        "surface-bright": "#f7f9fc",
+                        "on-primary": "#ffffff",
+                        "secondary-fixed": "#83fc8e",
+                        "surface-variant": "#e0e3e6",
+                        "surface-container-high": "#e6e8eb",
+                        "on-primary-fixed-variant": "#2d476f",
+                        "surface-container-low": "#f2f4f7"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "gutter": "1.5rem",
+                        "stack-sm": "1rem",
+                        "margin-mobile": "1rem",
+                        "margin-desktop": "2.5rem",
+                        "container-max": "1440px",
+                        "stack-lg": "2rem",
+                        "stack-md": "1.5rem",
+                        "stack-xs": "0.5rem"
+                    },
+                    fontFamily: {
+                        "numeric-data": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-xl": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "body-md": ["Inter"]
+                    },
+                    fontSize: {
+                        "numeric-data": ["15px", { lineHeight: "20px", fontWeight: "500" }],
+                        "body-sm": ["13px", { lineHeight: "18px", fontWeight: "400" }],
+                        "body-lg": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+                        "headline-xl": ["32px", { lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "600" }],
+                        "label-caps": ["12px", { lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "700" }],
+                        "headline-lg": ["24px", { lineHeight: "32px", letterSpacing: "-0.01em", fontWeight: "600" }],
+                        "headline-md": ["20px", { lineHeight: "28px", fontWeight: "500" }],
+                        "body-md": ["14px", { lineHeight: "20px", fontWeight: "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        @keyframes scale-in-bounce {
+            0% { transform: scale(0.5); opacity: 0; }
+            60% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-success-pop {
+            animation: scale-in-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+        .animate-pulse-ring::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; right: 0; bottom: 0;
+            border-radius: 50%;
+            border: 2px solid theme('colors.primary');
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex items-center justify-center p-gutter antialiased">
+<!-- Canvas Container: Suppressing global navigation for a focused confirmation state -->
+<main class="w-full max-w-[640px] bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/40 p-8 md:p-12">
+<!-- Success Animation & Header -->
+<div class="flex flex-col items-center text-center mb-10">
+<div class="animate-success-pop w-20 h-20 bg-secondary-container rounded-full flex items-center justify-center text-on-secondary-container mb-6 shadow-sm">
+<span class="material-symbols-outlined text-[48px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<h1 class="font-headline-xl text-headline-xl text-on-surface mb-2 tracking-tight">Proposta Aprovada com Sucesso!</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">A realocação de ativos foi registrada e está seguindo o fluxo de liquidação institucional.</p>
+</div>
+<!-- Progress Timeline -->
+<div class="mb-10 pl-2">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant mb-6 uppercase tracking-widest">Status de Execução</h2>
+<ul class="relative border-l-2 border-outline-variant/30 ml-3 space-y-8">
+<!-- Step 1: Done -->
+<li class="relative pl-8">
+<span class="absolute -left-[13px] flex items-center justify-center w-6 h-6 bg-secondary rounded-full text-on-secondary ring-4 ring-surface-container-lowest shadow-sm z-10">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check</span>
+</span>
+<div class="-mt-1">
+<h3 class="font-headline-md text-headline-md text-on-surface">Aprovação do Cliente</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">Validação criptográfica concluída via app.</p>
+</div>
+</li>
+<!-- Step 2: Current -->
+<li class="relative pl-8">
+<span class="absolute -left-[13px] flex items-center justify-center w-6 h-6 bg-primary-container rounded-full ring-4 ring-surface-container-lowest shadow-sm z-10 animate-pulse-ring">
+<span class="w-2.5 h-2.5 bg-primary-fixed rounded-full"></span>
+</span>
+<div class="-mt-1">
+<h3 class="font-headline-md text-headline-md text-primary font-semibold">Processamento da Mesa de Operações</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">Ordem enviada para execução em mercado.</p>
+</div>
+</li>
+<!-- Step 3: Pending -->
+<li class="relative pl-8">
+<span class="absolute -left-[13px] flex items-center justify-center w-6 h-6 bg-surface-container-highest rounded-full ring-4 ring-surface-container-lowest z-10">
+<span class="w-2 h-2 bg-outline rounded-full opacity-50"></span>
+</span>
+<div class="-mt-1">
+<h3 class="font-headline-md text-headline-md text-outline">Ativação dos Ativos</h3>
+<p class="font-body-sm text-body-sm text-outline/70 mt-1">Aguardando liquidação física e financeira.</p>
+</div>
+</li>
+</ul>
+</div>
+<!-- Summary Card (Bento Style) -->
+<div class="bg-surface rounded-xl border border-outline-variant/40 p-6 mb-10 shadow-sm">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-4 tracking-wider">Resumo da Operação</h3>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-y-5 gap-x-4">
+<div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-1">Portfólio Alvo</p>
+<p class="font-body-md text-body-md text-on-surface font-medium flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-primary">account_balance_wallet</span>
+                        Alpha Growth V (Institucional)
+                    </p>
+</div>
+<div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-1">Volume Financeiro Total</p>
+<p class="font-numeric-data text-numeric-data text-on-surface font-semibold">R$ 1.450.000,00</p>
+</div>
+<div class="col-span-1 sm:col-span-2 border-t border-outline-variant/30 pt-4 mt-1">
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-3">Diretrizes Aprovadas</p>
+<div class="flex flex-wrap gap-2">
+<div class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container text-on-surface-variant rounded-md border border-outline-variant/20">
+<span class="material-symbols-outlined text-[14px]">swap_horiz</span>
+<span class="font-body-sm text-body-sm font-medium">Rebalanceamento de Renda Fixa</span>
+</div>
+<div class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container text-on-surface-variant rounded-md border border-outline-variant/20">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+<span class="font-body-sm text-body-sm font-medium">Aporte em Multimercado</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Actions -->
+<div class="flex flex-col sm:flex-row gap-4 pt-2">
+<button class="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 rounded-lg border border-primary text-primary font-body-md text-body-md font-medium hover:bg-primary/5 transition-colors focus:ring-2 focus:ring-primary focus:ring-offset-1">
+<span class="material-symbols-outlined text-[20px]">download</span>
+                Baixar Comprovante PDF
+            </button>
+<button class="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 rounded-lg bg-primary text-on-primary font-body-md text-body-md font-medium hover:bg-primary/90 transition-colors shadow-sm focus:ring-2 focus:ring-primary focus:ring-offset-1">
+                Voltar ao Dashboard
+                <span class="material-symbols-outlined text-[20px]">arrow_forward</span>
+</button>
+</div>
+</main>
+</body></html>

@@ -1,0 +1,342 @@
+// Capital Elite — CRM de Wealth Management
+// Schema cobrindo: usuários (assessores), clientes, leads/pipeline, produtos,
+// suitability, recomendações de IA, interações e trilha de auditoria.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USUÁRIOS (assessores / admins do CRM)
+// ============================================================
+
+enum UserRole {
+  ADMIN
+  ASSESSOR
+  COMPLIANCE
+  READONLY
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  nome      String
+  senhaHash String
+  role      UserRole @default(ASSESSOR)
+  ativo     Boolean  @default(true)
+
+  mfaEnabled Boolean @default(false)
+  mfaSecret  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clientes      Cliente[]      @relation("ClienteResponsavel")
+  leads         Lead[]         @relation("LeadResponsavel")
+  interacoes    Interacao[]
+  recomendacoes Recomendacao[] @relation("RecomendacaoAprovador")
+  auditoria     Auditoria[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// ============================================================
+// CLIENTES (carteira ativa do assessor)
+// ============================================================
+
+enum PerfilInvestidor {
+  CONSERVADOR
+  MODERADO
+  ARROJADO
+  AGRESSIVO
+}
+
+enum StatusCliente {
+  ATIVO
+  PROSPECTO
+  INATIVO
+  BLOQUEADO
+}
+
+model Cliente {
+  id        String  @id @default(cuid())
+  nome      String
+  email     String  @unique
+  telefone  String?
+  cpfHash   String  @unique // hash do CPF — dado sensível LGPD
+  cpfMasked String // ex: "***.***.123-45" para exibição
+
+  cidade     String?
+  uf         String?
+  perfil     PerfilInvestidor @default(MODERADO)
+  patrimonio Decimal          @default(0) @db.Decimal(18, 2)
+  status     StatusCliente    @default(PROSPECTO)
+
+  responsavelId String?
+  responsavel   User?   @relation("ClienteResponsavel", fields: [responsavelId], references: [id])
+
+  ultimaInteracao DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  suitability   Suitability[]
+  recomendacoes Recomendacao[]
+  interacoes    Interacao[]
+  posicoes      Posicao[]
+
+  @@index([responsavelId, status])
+  @@index([perfil])
+  @@map("clientes")
+}
+
+// Carteira atual do cliente: quanto está alocado em cada produto.
+// Usado pelo motor de IA para calcular diversificação e gaps.
+model Posicao {
+  id        String  @id @default(cuid())
+  clienteId String
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  produtoId String
+  produto   Produto @relation(fields: [produtoId], references: [id])
+  valor     Decimal @db.Decimal(18, 2)
+
+  adquiridoEm DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  @@unique([clienteId, produtoId])
+  @@index([clienteId])
+  @@map("posicoes")
+}
+
+// ============================================================
+// LEADS / PIPELINE COMERCIAL
+// ============================================================
+
+enum EstagioPipeline {
+  PROSPECCAO
+  QUALIFICACAO
+  PROPOSTA
+  NEGOCIACAO
+  FECHADO
+  PERDIDO
+}
+
+model Lead {
+  id            String          @id @default(cuid())
+  nome          String
+  email         String?
+  telefone      String?
+  origem        String // "Indicação", "Inbound", "Evento", "LinkedIn"
+  estagio       EstagioPipeline @default(PROSPECCAO)
+  valorEstimado Decimal         @default(0) @db.Decimal(18, 2)
+  observacoes   String?
+
+  responsavelId String?
+  responsavel   User?   @relation("LeadResponsavel", fields: [responsavelId], references: [id])
+
+  // Quando vira cliente, aponta para o registro
+  clienteId       String?
+  clienteIdUnique String? @unique // marker pra evitar duplicar conversão
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  fechadoEm DateTime?
+
+  // histórico de mudanças de estágio
+  estagioHistorico EstagioHistorico[]
+
+  @@index([estagio, responsavelId])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+model EstagioHistorico {
+  id       String          @id @default(cuid())
+  leadId   String
+  lead     Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  estagio  EstagioPipeline
+  notas    String?
+  criadoEm DateTime        @default(now())
+
+  @@index([leadId, criadoEm])
+  @@map("estagio_historico")
+}
+
+// ============================================================
+// PRODUTOS FINANCEIROS
+// ============================================================
+
+enum CategoriaProduto {
+  RENDA_FIXA
+  RENDA_VARIAVEL
+  FUNDOS
+  PREVIDENCIA
+  ESTRUTURADOS
+  CAMBIO
+}
+
+model Produto {
+  id               String           @id @default(cuid())
+  nome             String
+  emissor          String
+  categoria        CategoriaProduto
+  rentabilidadeAno Decimal          @db.Decimal(6, 2) // % a.a.
+  risco            Int // 1-5
+  perfilMinimo     PerfilInvestidor
+  liquidez         String // "D+0", "D+30", "Vencimento"
+  taxaAdmin        Decimal?         @db.Decimal(5, 2)
+  taxaPerformance  Decimal?         @db.Decimal(5, 2)
+  ticker           String?          @unique
+  ativo            Boolean          @default(true)
+  descricao        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recomendacoes Recomendacao[]
+  posicoes      Posicao[]
+
+  @@index([categoria, ativo])
+  @@index([perfilMinimo])
+  @@map("produtos")
+}
+
+// ============================================================
+// SUITABILITY (questionário de perfil do investidor)
+// ============================================================
+
+model Suitability {
+  id        String  @id @default(cuid())
+  clienteId String
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  // Respostas raw do questionário (JSON com chaves perguntaId → resposta)
+  respostas Json
+
+  // Pontuação calculada e perfil resultante
+  pontuacao          Int
+  perfilCalculado    PerfilInvestidor
+  versaoQuestionario String           @default("v1")
+
+  validoAte     DateTime // suitability tem validade (geralmente 24 meses)
+  aplicadoEm    DateTime @default(now())
+  aplicadoPorId String?
+
+  @@index([clienteId, aplicadoEm])
+  @@map("suitability")
+}
+
+// ============================================================
+// RECOMENDAÇÕES (geradas pela IA Engine)
+// ============================================================
+
+enum StatusRecomendacao {
+  PENDENTE
+  APROVADA
+  RECUSADA
+  ATIVA
+  EXPIRADA
+}
+
+model Recomendacao {
+  id        String  @id @default(cuid())
+  clienteId String
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  produtoId String
+  produto   Produto @relation(fields: [produtoId], references: [id])
+
+  score         Decimal @db.Decimal(4, 3) // 0.000 - 1.000
+  justificativa String // explicação humanizada do motor de IA
+  payload       Json // detalhes do scoring (regras aplicadas, features, pesos)
+
+  status StatusRecomendacao @default(PENDENTE)
+
+  aprovadoPorId String?
+  aprovadoPor   User?     @relation("RecomendacaoAprovador", fields: [aprovadoPorId], references: [id])
+  aprovadoEm    DateTime?
+  recusaMotivo  String?
+
+  geradoEm DateTime  @default(now())
+  expiraEm DateTime?
+
+  @@index([clienteId, status])
+  @@index([status, geradoEm])
+  @@map("recomendacoes")
+}
+
+// ============================================================
+// INTERAÇÕES (histórico de contato com cliente)
+// ============================================================
+
+enum TipoInteracao {
+  EMAIL
+  LIGACAO
+  REUNIAO
+  WHATSAPP
+  TAREFA
+  NOTA
+}
+
+model Interacao {
+  id        String  @id @default(cuid())
+  clienteId String
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  autorId   String
+  autor     User    @relation(fields: [autorId], references: [id])
+
+  tipo    TipoInteracao
+  assunto String
+  resumo  String?
+  data    DateTime      @default(now())
+
+  metadata Json? // ex: duração da ligação, anexos, link da call
+
+  createdAt DateTime @default(now())
+
+  @@index([clienteId, data(sort: Desc)])
+  @@index([autorId, data(sort: Desc)])
+  @@map("interacoes")
+}
+
+// ============================================================
+// AUDITORIA (trilha completa de mudanças sensíveis)
+// ============================================================
+
+enum AcaoAuditoria {
+  CRIACAO
+  ATUALIZACAO
+  EXCLUSAO
+  LOGIN
+  APROVACAO_RECOMENDACAO
+  RECUSA_RECOMENDACAO
+  APROVACAO_CARTEIRA
+  EXPORTACAO_DADOS
+  ACESSO_DADO_SENSIVEL
+}
+
+model Auditoria {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  acao       AcaoAuditoria
+  entidade   String // ex: "Cliente", "Recomendacao"
+  entidadeId String?
+  diff       Json? // before/after pra updates
+
+  ip        String?
+  userAgent String?
+
+  criadoEm DateTime @default(now())
+
+  @@index([userId, criadoEm])
+  @@index([entidade, entidadeId])
+  @@index([acao, criadoEm])
+  @@map("auditoria")
+}

@@ -1,0 +1,267 @@
+import type {
+  Cliente,
+  Interacao,
+  Lead,
+  Produto,
+  RecomendacaoIA,
+} from "@/types/domain";
+
+export const kpisDashboard = {
+  aumTotal: 184_320_000,
+  aumDelta: 4.2,
+  clientesAtivos: 287,
+  clientesDelta: 1.8,
+  leadsAbertos: 42,
+  leadsDelta: -3.5,
+  conversao30d: 23.4,
+  conversaoDelta: 2.1,
+};
+
+export const aumSerie = [
+  { mes: "Jan", aum: 162 },
+  { mes: "Fev", aum: 165 },
+  { mes: "Mar", aum: 168 },
+  { mes: "Abr", aum: 172 },
+  { mes: "Mai", aum: 176 },
+  { mes: "Jun", aum: 184 },
+];
+
+export const captacaoSerie = [
+  { mes: "Jan", entrada: 2.3, saida: 0.8 },
+  { mes: "Fev", entrada: 3.1, saida: 1.0 },
+  { mes: "Mar", entrada: 4.0, saida: 1.4 },
+  { mes: "Abr", entrada: 3.6, saida: 0.9 },
+  { mes: "Mai", entrada: 4.8, saida: 1.1 },
+  { mes: "Jun", entrada: 5.2, saida: 1.3 },
+];
+
+export const distribuicaoPerfil = [
+  { perfil: "Conservador", pct: 28 },
+  { perfil: "Moderado", pct: 41 },
+  { perfil: "Arrojado", pct: 22 },
+  { perfil: "Agressivo", pct: 9 },
+];
+
+export const clientes: Cliente[] = [
+  {
+    id: "c-001",
+    nome: "Mariana Andrade",
+    email: "mariana.andrade@example.com",
+    telefone: "+55 11 98123-4567",
+    cidade: "São Paulo, SP",
+    perfil: "moderado",
+    patrimonio: 4_350_000,
+    ultimaInteracao: "2026-05-22",
+    status: "ativo",
+  },
+  {
+    id: "c-002",
+    nome: "Ricardo Tavares",
+    email: "ricardo.tavares@example.com",
+    telefone: "+55 21 97777-1010",
+    cidade: "Rio de Janeiro, RJ",
+    perfil: "arrojado",
+    patrimonio: 9_120_000,
+    ultimaInteracao: "2026-05-20",
+    status: "ativo",
+  },
+  {
+    id: "c-003",
+    nome: "Bianca Lemos",
+    email: "bianca.lemos@example.com",
+    telefone: "+55 31 96555-3322",
+    cidade: "Belo Horizonte, MG",
+    perfil: "conservador",
+    patrimonio: 1_780_000,
+    ultimaInteracao: "2026-05-18",
+    status: "ativo",
+  },
+  {
+    id: "c-004",
+    nome: "Felipe Okabe",
+    email: "felipe.okabe@example.com",
+    telefone: "+55 41 96123-9988",
+    cidade: "Curitiba, PR",
+    perfil: "agressivo",
+    patrimonio: 14_500_000,
+    ultimaInteracao: "2026-05-15",
+    status: "ativo",
+  },
+  {
+    id: "c-005",
+    nome: "Patrícia Holanda",
+    email: "patricia.holanda@example.com",
+    telefone: "+55 85 98444-6655",
+    cidade: "Fortaleza, CE",
+    perfil: "moderado",
+    patrimonio: 2_650_000,
+    ultimaInteracao: "2026-05-10",
+    status: "prospecto",
+  },
+];
+
+export const leads: Lead[] = [
+  {
+    id: "l-001",
+    nome: "Carlos Mendes",
+    origem: "Indicação",
+    estagio: "qualificacao",
+    valorEstimado: 1_200_000,
+    diasNoEstagio: 4,
+    responsavel: "João Diniz",
+  },
+  {
+    id: "l-002",
+    nome: "Helena Sá",
+    origem: "Evento",
+    estagio: "proposta",
+    valorEstimado: 3_500_000,
+    diasNoEstagio: 9,
+    responsavel: "João Diniz",
+  },
+  {
+    id: "l-003",
+    nome: "Otávio Brandão",
+    origem: "Inbound",
+    estagio: "negociacao",
+    valorEstimado: 850_000,
+    diasNoEstagio: 12,
+    responsavel: "Marina Lopes",
+  },
+  {
+    id: "l-004",
+    nome: "Sofia Albuquerque",
+    origem: "LinkedIn",
+    estagio: "prospeccao",
+    valorEstimado: 600_000,
+    diasNoEstagio: 2,
+    responsavel: "João Diniz",
+  },
+];
+
+export const produtos: Produto[] = [
+  {
+    id: "p-001",
+    nome: "Tesouro IPCA+ 2035",
+    categoria: "renda-fixa",
+    emissor: "Tesouro Nacional",
+    rentabilidadeAno: 6.4,
+    risco: 1,
+    perfilMinimo: "conservador",
+    liquidez: "D+1",
+  },
+  {
+    id: "p-002",
+    nome: "Fundo XP Top Ações",
+    categoria: "fundos",
+    emissor: "XP Asset",
+    rentabilidadeAno: 14.2,
+    risco: 4,
+    perfilMinimo: "arrojado",
+    liquidez: "D+30",
+    taxaAdmin: 2.0,
+  },
+  {
+    id: "p-003",
+    nome: "Debênture Cemig 2030",
+    categoria: "renda-fixa",
+    emissor: "Cemig",
+    rentabilidadeAno: 11.8,
+    risco: 3,
+    perfilMinimo: "moderado",
+    liquidez: "Vencimento",
+  },
+  {
+    id: "p-004",
+    nome: "BDR S&P 500",
+    categoria: "renda-variavel",
+    emissor: "B3",
+    rentabilidadeAno: 18.5,
+    risco: 4,
+    perfilMinimo: "arrojado",
+    liquidez: "D+2",
+  },
+  {
+    id: "p-005",
+    nome: "Previdência Conservadora",
+    categoria: "previdencia",
+    emissor: "Icatu",
+    rentabilidadeAno: 8.9,
+    risco: 2,
+    perfilMinimo: "conservador",
+    liquidez: "D+5",
+    taxaAdmin: 1.2,
+  },
+];
+
+export const recomendacoes: RecomendacaoIA[] = [
+  {
+    id: "r-001",
+    clienteId: "c-001",
+    clienteNome: "Mariana Andrade",
+    produtoId: "p-003",
+    produtoNome: "Debênture Cemig 2030",
+    score: 0.91,
+    justificativa:
+      "Cliente moderada com sobreposição em renda fixa pública. Adicionar crédito privado de emissor AAA aumenta yield em ~2.4% mantendo perfil.",
+    geradoEm: "2026-05-24T09:12:00Z",
+    status: "pendente",
+  },
+  {
+    id: "r-002",
+    clienteId: "c-004",
+    clienteNome: "Felipe Okabe",
+    produtoId: "p-004",
+    produtoNome: "BDR S&P 500",
+    score: 0.87,
+    justificativa:
+      "Perfil agressivo com 0% de exposição internacional. Diversificação geográfica reduz volatilidade da carteira em ~8% no backtest 5 anos.",
+    geradoEm: "2026-05-23T15:40:00Z",
+    status: "pendente",
+  },
+  {
+    id: "r-003",
+    clienteId: "c-003",
+    clienteNome: "Bianca Lemos",
+    produtoId: "p-001",
+    produtoNome: "Tesouro IPCA+ 2035",
+    score: 0.94,
+    justificativa:
+      "Cliente conservadora com objetivo de aposentadoria em 12 anos. Indexação ao IPCA preserva poder de compra; duration adequada ao horizonte.",
+    geradoEm: "2026-05-22T11:05:00Z",
+    status: "aprovada",
+  },
+];
+
+export const interacoesRecentes: Interacao[] = [
+  {
+    id: "i-001",
+    clienteId: "c-001",
+    clienteNome: "Mariana Andrade",
+    tipo: "reuniao",
+    assunto: "Revisão de carteira Q2",
+    resumo: "Discutimos rebalanceamento da posição em renda fixa.",
+    data: "2026-05-22T14:30:00Z",
+    autor: "João Diniz",
+  },
+  {
+    id: "i-002",
+    clienteId: "c-002",
+    clienteNome: "Ricardo Tavares",
+    tipo: "ligacao",
+    assunto: "Follow-up sobre BDR",
+    resumo: "Cliente pediu mais detalhes sobre alocação internacional.",
+    data: "2026-05-20T10:15:00Z",
+    autor: "João Diniz",
+  },
+  {
+    id: "i-003",
+    clienteId: "c-003",
+    clienteNome: "Bianca Lemos",
+    tipo: "email",
+    assunto: "Proposta aprovada",
+    resumo: "Cliente confirmou alocação em Tesouro IPCA+ 2035.",
+    data: "2026-05-18T16:00:00Z",
+    autor: "Marina Lopes",
+  },
+];
