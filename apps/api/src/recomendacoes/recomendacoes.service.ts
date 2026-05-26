@@ -2,8 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, StatusRecomendacao } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildPage, skipTake } from '../common/pagination';
-import { produtoToIA, topRecomendacoes } from './ia/rule-engine';
-import type { Contexto, PosicaoIA } from './ia/types';
+import {
+  AiEngineService,
+  type AiEngineRequest,
+} from './ai-engine.service';
 import type {
   GenerateDto,
   RecomendacaoQueryDto,
@@ -18,41 +20,47 @@ const includeRecomendacao = {
 
 @Injectable()
 export class RecomendacoesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly aiEngine: AiEngineService,
+  ) {}
 
   /**
-   * Executa o motor de IA pra um cliente. Estratégia:
-   * 1. Marca recomendações PENDENTE antigas como EXPIRADA (preserva histórico)
-   * 2. Roda engine
-   * 3. Persiste top-N como novas PENDENTEs
+   * Roda o motor de IA pra um cliente.
+   *
+   * Estratégia:
+   *   1. Marca recomendações PENDENTE antigas como EXPIRADA (preserva histórico)
+   *   2. Monta o contexto a partir do Postgres (cliente, suitability, posições, catálogo)
+   *   3. Chama o microsserviço Python via HTTP
+   *   4. Persiste top-N como novas PENDENTEs
    */
   async generate(dto: GenerateDto) {
-    const ctx = await this.buildContexto(dto.clienteId);
-    const sugestoes = topRecomendacoes(ctx, dto.topN);
+    const req = await this.buildAiEngineRequest(dto.clienteId, dto.topN);
 
-    if (sugestoes.length === 0) {
+    const result = await this.aiEngine.recommend(req);
+    if (result.recomendacoes.length === 0) {
       return { geradas: 0, recomendacoes: [] };
     }
 
-    // Transação: expira antigas + cria novas
+    // Expira antigas
     await this.prisma.recomendacao.updateMany({
       where: { clienteId: dto.clienteId, status: StatusRecomendacao.PENDENTE },
       data: { status: StatusRecomendacao.EXPIRADA },
     });
 
     const criadas = await Promise.all(
-      sugestoes.map((s) =>
+      result.recomendacoes.map((r) =>
         this.prisma.recomendacao.create({
           data: {
             clienteId: dto.clienteId,
-            produtoId: s.produto.id,
-            score: Number(s.score.toFixed(3)),
-            justificativa: s.justificativa,
+            produtoId: r.produtoId,
+            score: Number(r.score.toFixed(3)),
+            justificativa: r.justificativa,
             payload: {
-              fatores: s.fatores,
-              pesos: s.pesos,
-              contribs: s.contribs,
-              geradoPor: 'rule-engine-v1',
+              fatores: r.fatores,
+              pesos: r.pesos,
+              contribs: r.contribs,
+              geradoPor: result.engineVersion,
             } as Prisma.InputJsonValue,
             status: StatusRecomendacao.PENDENTE,
             expiraEm: new Date(Date.now() + 30 * 86400000), // 30 dias
@@ -128,7 +136,14 @@ export class RecomendacoesService {
   // Helpers
   // ============================================================
 
-  private async buildContexto(clienteId: string): Promise<Contexto> {
+  /**
+   * Lê do Postgres tudo que o motor Python precisa e monta o request HTTP.
+   * Aqui acontece a conversão de Decimal (Prisma) → number (JSON).
+   */
+  private async buildAiEngineRequest(
+    clienteId: string,
+    topN: number,
+  ): Promise<AiEngineRequest> {
     const cliente = await this.prisma.cliente.findUnique({
       where: { id: clienteId },
       include: {
@@ -145,12 +160,6 @@ export class RecomendacoesService {
 
     const catalog = await this.prisma.produto.findMany({ where: { ativo: true } });
 
-    const posicoes: PosicaoIA[] = cliente.posicoes.map((p) => ({
-      produtoId: p.produtoId,
-      categoria: p.produto.categoria,
-      valor: Number(p.valor.toString()),
-    }));
-
     return {
       cliente: {
         id: cliente.id,
@@ -163,8 +172,24 @@ export class RecomendacoesService {
         horizonteAnos: Number(respostas.horizonte_anos ?? 5),
         toleranciaPerda: Number(respostas.tolerancia_perda ?? 15),
       },
-      posicoes,
-      catalog: catalog.map(produtoToIA),
+      posicoes: cliente.posicoes.map((p) => ({
+        produtoId: p.produtoId,
+        categoria: p.produto.categoria,
+        valor: Number(p.valor.toString()),
+      })),
+      catalog: catalog.map((p) => ({
+        id: p.id,
+        nome: p.nome,
+        emissor: p.emissor,
+        categoria: p.categoria,
+        rentabilidadeAno: Number(p.rentabilidadeAno.toString()),
+        risco: p.risco,
+        perfilMinimo: p.perfilMinimo,
+        liquidez: p.liquidez,
+        taxaAdmin: p.taxaAdmin ? Number(p.taxaAdmin.toString()) : null,
+        ativo: p.ativo,
+      })),
+      topN,
     };
   }
 
