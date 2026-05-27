@@ -7,6 +7,10 @@ Cada recomendação ganha:
 """
 from .models import Cliente, Posicao, Produto, Suitability
 
+import os
+
+CASA_DISTRIBUI = os.getenv("CRM_CASA_DISTRIBUI", "que distribuímos")
+
 CATEGORIA_LABEL: dict[str, str] = {
     "RENDA_FIXA": "renda fixa",
     "RENDA_VARIAVEL": "renda variável",
@@ -53,15 +57,16 @@ def frase_fator(
     cliente: Cliente,
     posicoes: list[Posicao],
     p: Produto,
+    suitability: Suitability,
 ) -> str:
     if fator == "profileMatch":
         if valor == 1.0:
             return (
                 f"Produto enquadrado exatamente no perfil "
-                f"{cliente.perfil.lower()}."
+                f"{suitability.perfilCalculado.lower()}."
             )
         return (
-            f"Produto adequado ao perfil {cliente.perfil.lower()} "
+            f"Produto adequado ao perfil {suitability.perfilCalculado.lower()} "
             f"(perfil mínimo: {p.perfilMinimo.lower()})."
         )
 
@@ -79,14 +84,17 @@ def frase_fator(
 
     if fator == "yield":
         rent = f"{p.rentabilidadeAno:.1f}".replace(".", ",")
+        if p.tributacao == "ISENTO":
+            base = f"Rentabilidade de {rent}% a.a. **isenta de IR**"
+        elif p.tributacao == "INCENTIVADO":
+            base = f"Rentabilidade de {rent}% a.a. **incentivada (isenta de IR pra PF)**"
+        else:
+            base = f"Rentabilidade de {rent}% a.a."
         if valor > 0.7:
-            return (
-                f"Rentabilidade de {rent}% a.a. está entre as melhores da "
-                f"categoria."
-            )
+            return f"{base} — está entre as melhores líquidas da categoria."
         if valor > 0.4:
-            return f"Rentabilidade de {rent}% a.a. é competitiva."
-        return f"Rentabilidade de {rent}% a.a. abaixo da média da categoria."
+            return f"{base} — competitiva líquida de impostos."
+        return f"{base}."
 
     if fator == "liquidity":
         h = "horizonte"  # placeholder — preenchido por quem chama
@@ -122,7 +130,7 @@ def abertura(
     suitability: Suitability,
 ) -> str:
     primeiro = cliente.nome.split(" ")[0]
-    perfil = cliente.perfil.lower()
+    perfil = suitability.perfilCalculado.lower()
     rent = f"{p.rentabilidadeAno:.1f}".replace(".", ",")
 
     if dominante == "diversification":
@@ -147,9 +155,16 @@ def abertura(
 
     if dominante == "yield":
         cat = CATEGORIA_LABEL[p.categoria]
+        if p.tributacao in ("ISENTO", "INCENTIVADO"):
+            kind = "isenta de IR" if p.tributacao == "ISENTO" else "incentivada (isenta de IR pra PF)"
+            return (
+                f"Dentro de {cat}, o {p.nome} se destaca: entrega {rent}% a.a. "
+                f"e é {kind} — pra {primeiro}, isso significa que o bruto é "
+                f"também o líquido na carteira."
+            )
         return (
             f"Dentro de {cat}, o {p.nome} entrega {rent}% a.a. — está entre "
-            f"os melhores que o BTG distribui na categoria."
+            f"os melhores {CASA_DISTRIBUI} na categoria."
         )
 
     if dominante == "liquidity":
@@ -173,8 +188,8 @@ def abertura(
     return ""
 
 
-def contexto(dominante: str, cliente: Cliente) -> str:
-    perfil = cliente.perfil.lower()
+def contexto(dominante: str, cliente: Cliente, suitability: Suitability) -> str:
+    perfil = suitability.perfilCalculado.lower()
     patrimonio = humanizar_patrimonio(cliente.patrimonio)
     primeiro = cliente.nome.split(" ")[0]
 
@@ -259,6 +274,8 @@ def proposta(
 ) -> str:
     endos: list[str] = []
     for s in secundarios:
+        if s["contrib"] < 0.10:
+            continue
         e = endorsement(s["fator"], fatores[s["fator"]], p, suitability)
         if e:
             endos.append(e)
@@ -280,8 +297,9 @@ def build_justificativa(
     cliente: Cliente,
     posicoes: list[Posicao],
     suitability: Suitability,
+    exposicao_emissor: dict[str, float] | None = None,
 ) -> str:
-    """Monta a justificativa final em 3 partes."""
+    """Monta a justificativa final em 3-4 partes."""
     contribs = sorted(scored["contribs"], key=lambda c: c["contrib"], reverse=True)
     dom = contribs[0]["fator"]
     secundarios = contribs[1:3]
@@ -291,9 +309,23 @@ def build_justificativa(
 
     partes = [
         abertura(dom, cliente, posicoes, p, suitability),
-        contexto(dom, cliente),
+        contexto(dom, cliente, suitability),
         proposta(dom, p, secundarios, fatores, suitability),
     ]
+
+    # Nota de diversificação de emissor — só se cliente está concentrado em OUTRO emissor
+    if exposicao_emissor and cliente.patrimonio > 0:
+        top_emissor = max(exposicao_emissor.items(), key=lambda kv: kv[1], default=None)
+        if top_emissor:
+            top_nome, top_valor = top_emissor
+            top_pct = top_valor / cliente.patrimonio
+            if top_pct > 0.20 and top_nome != p.emissor:
+                pct_int = round(top_pct * 100)
+                partes.append(
+                    f"Optei pelo {p.emissor} ao invés de outras opções da {top_nome}: "
+                    f"você já tem {pct_int}% do patrimônio nesse emissor — "
+                    f"diversificar emissor é higiene de risco."
+                )
 
     return " ".join(part for part in partes if part)
 
@@ -309,7 +341,9 @@ def preencher_frases_fator(
     fatores: dict[str, float] = scored["fatores"]
 
     for c in scored["contribs"]:
-        frase = frase_fator(c["fator"], fatores[c["fator"]], cliente, posicoes, p)
+        frase = frase_fator(
+            c["fator"], fatores[c["fator"]], cliente, posicoes, p, suitability
+        )
         if c["fator"] == "liquidity":
             # frase_fator usa placeholder "horizonte" — substituir aqui
             frase = frase.replace(

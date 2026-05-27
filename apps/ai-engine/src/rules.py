@@ -11,6 +11,7 @@ from .models import (
     Posicao,
     Produto,
     RecommendRequest,
+    Suitability,
 )
 
 # Ordem ordinal dos perfis (mais conservador → mais agressivo)
@@ -28,6 +29,49 @@ PESOS: dict[str, float] = {
     "yield": 0.20,
     "liquidity": 0.15,
     "cost": 0.15,
+}
+
+# Drawdown máximo esperado (% sobre o investido) por nível de risco do produto.
+# Calibração grosseira pra checar contra toleranciaPerda declarada na suitability.
+RISCO_DRAWDOWN_ESPERADO: dict[int, float] = {
+    1: 5.0,
+    2: 10.0,
+    3: 20.0,
+    4: 35.0,
+    5: 50.0,
+}
+
+
+def aliquota_ir_estimada(horizonte_anos: int) -> float:
+    """Tabela regressiva de IR sobre renda fixa/fundos tributados.
+    < 6 meses: 22.5% | 6-12m: 20% | 12-24m: 17.5% | > 24m: 15%
+    Usa horizonte_anos como proxy do prazo médio."""
+    if horizonte_anos < 0.5:
+        return 0.225
+    if horizonte_anos < 1:
+        return 0.20
+    if horizonte_anos < 2:
+        return 0.175
+    return 0.15
+
+
+def yield_liquido(p: Produto, horizonte_anos: int) -> float:
+    """Yield estimado líquido de IR pra horizonte declarado.
+    ISENTO e INCENTIVADO: yield bruto = líquido.
+    TRIBUTADO: aplica alíquota da tabela regressiva."""
+    if p.tributacao in ("ISENTO", "INCENTIVADO"):
+        return p.rentabilidadeAno
+    aliq = aliquota_ir_estimada(horizonte_anos)
+    return p.rentabilidadeAno * (1 - aliq)
+
+# Cap de taxa de admin (%) por categoria. Acima do cap, score=0.
+COST_CAP_BY_CATEGORY: dict[str, float] = {
+    "RENDA_FIXA": 1.0,
+    "RENDA_VARIAVEL": 2.5,
+    "FUNDOS": 2.0,
+    "PREVIDENCIA": 2.0,
+    "ESTRUTURADOS": 2.5,
+    "CAMBIO": 2.0,
 }
 
 # Alocação alvo (%) por perfil e categoria — referência da indústria
@@ -49,7 +93,8 @@ ALVO: dict[str, dict[str, float]] = {
         "CAMBIO": 5,
     },
     "AGRESSIVO": {
-        "RENDA_FIXA": 15,
+        "RENDA_FIXA": 10,
+        "PREVIDENCIA": 5,
         "FUNDOS": 30,
         "RENDA_VARIAVEL": 30,
         "ESTRUTURADOS": 15,
@@ -72,6 +117,30 @@ def liquidez_em_meses(liquidez: str) -> float:
     return 1.0
 
 
+LIMITE_CONCENTRACAO_EMISSOR = 0.30  # 30% do patrimônio em um emissor já é demais
+
+PRIORIDADE_MOTIVOS: list[str] = [
+    "perfil_incompativel",
+    "concentracao_emissor",
+    "risco_alem_tolerancia",
+    "ja_sobrealocado",
+]
+
+
+def exposicao_por_emissor(
+    posicoes: list[Posicao], catalog: list[Produto]
+) -> dict[str, float]:
+    """Soma quanto o cliente já tem em cada emissor.
+    Precisa do catalog pra resolver produtoId -> emissor."""
+    emissor_de: dict[str, str] = {p.id: p.emissor for p in catalog}
+    out: dict[str, float] = {}
+    for pos in posicoes:
+        e = emissor_de.get(pos.produtoId)
+        if e:
+            out[e] = out.get(e, 0.0) + pos.valor
+    return out
+
+
 def clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
@@ -82,13 +151,26 @@ def clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 
 def passa_filtro(
-    cliente: Cliente, posicoes: list[Posicao], p: Produto
+    cliente: Cliente,
+    suitability: Suitability,
+    exposicao_emissor: dict[str, float],
+    posicoes: list[Posicao],
+    p: Produto,
 ) -> tuple[bool, str]:
     if not p.ativo:
         return (False, "inativo")
 
-    if PERFIL_ORDEM[p.perfilMinimo] > PERFIL_ORDEM[cliente.perfil]:
+    if PERFIL_ORDEM[p.perfilMinimo] > PERFIL_ORDEM[suitability.perfilCalculado]:
         return (False, "perfil_incompativel")
+
+    drawdown_esperado = RISCO_DRAWDOWN_ESPERADO.get(p.risco, 50.0)
+    if drawdown_esperado > suitability.toleranciaPerda * 1.5:
+        return (False, "risco_alem_tolerancia")
+
+    if cliente.patrimonio > 0:
+        exp_emissor = exposicao_emissor.get(p.emissor, 0.0)
+        if exp_emissor / cliente.patrimonio > LIMITE_CONCENTRACAO_EMISSOR:
+            return (False, "concentracao_emissor")
 
     # Sobrealocação: cliente já tem >30% do patrimônio nesse produto
     exposicao = sum(pos.valor for pos in posicoes if pos.produtoId == p.id)
@@ -103,8 +185,8 @@ def passa_filtro(
 # ============================================================
 
 
-def profile_match(cliente: Cliente, p: Produto) -> float:
-    delta = PERFIL_ORDEM[cliente.perfil] - PERFIL_ORDEM[p.perfilMinimo]
+def profile_match(suitability: Suitability, p: Produto) -> float:
+    delta = PERFIL_ORDEM[suitability.perfilCalculado] - PERFIL_ORDEM[p.perfilMinimo]
     if delta == 0:
         return 1.0
     if delta == 1:
@@ -115,9 +197,12 @@ def profile_match(cliente: Cliente, p: Produto) -> float:
 
 
 def diversification(
-    cliente: Cliente, posicoes: list[Posicao], p: Produto
+    cliente: Cliente,
+    suitability: Suitability,
+    posicoes: list[Posicao],
+    p: Produto,
 ) -> float:
-    target = ALVO.get(cliente.perfil, {}).get(p.categoria, 0.0)
+    target = ALVO.get(suitability.perfilCalculado, {}).get(p.categoria, 0.0)
     if target == 0 or cliente.patrimonio == 0:
         return 0.0
 
@@ -132,15 +217,15 @@ def diversification(
     return clamp(gap / target)
 
 
-def yield_relativo(p: Produto, catalog: list[Produto]) -> float:
+def yield_relativo(p: Produto, catalog: list[Produto], horizonte_anos: int) -> float:
     mesma = [x for x in catalog if x.categoria == p.categoria]
     if len(mesma) <= 1:
         return 0.5
-    rents = [x.rentabilidadeAno for x in mesma]
-    lo, hi = min(rents), max(rents)
+    liquidos = [yield_liquido(x, horizonte_anos) for x in mesma]
+    lo, hi = min(liquidos), max(liquidos)
     if hi == lo:
         return 0.5
-    return clamp((p.rentabilidadeAno - lo) / (hi - lo))
+    return clamp((yield_liquido(p, horizonte_anos) - lo) / (hi - lo))
 
 
 def liquidity_fit(horizonte_anos: int, p: Produto) -> float:
@@ -155,7 +240,8 @@ def liquidity_fit(horizonte_anos: int, p: Produto) -> float:
 def cost_score(p: Produto) -> float:
     if p.taxaAdmin is None:
         return 1.0
-    return clamp(1 - p.taxaAdmin / 3)
+    cap = COST_CAP_BY_CATEGORY.get(p.categoria, 3.0)
+    return clamp(1 - p.taxaAdmin / cap)
 
 
 # ============================================================
@@ -163,18 +249,17 @@ def cost_score(p: Produto) -> float:
 # ============================================================
 
 
-def score_produto(
-    req: RecommendRequest, p: Produto
-) -> dict | None:
-    """Pontua um produto. Retorna None se foi filtrado."""
-    ok, _motivo = passa_filtro(req.cliente, req.posicoes, p)
-    if not ok:
-        return None
-
+def _pontuar(
+    req: RecommendRequest, p: Produto, exposicao_emissor: dict[str, float]
+) -> dict:
+    """Pontua um produto que JÁ PASSOU pelo passa_filtro.
+    Não chama passa_filtro novamente — caller é responsável por filtrar."""
     fatores: dict[str, float] = {
-        "profileMatch": profile_match(req.cliente, p),
-        "diversification": diversification(req.cliente, req.posicoes, p),
-        "yield": yield_relativo(p, req.catalog),
+        "profileMatch": profile_match(req.suitability, p),
+        "diversification": diversification(
+            req.cliente, req.suitability, req.posicoes, p
+        ),
+        "yield": yield_relativo(p, req.catalog, req.suitability.horizonteAnos),
         "liquidity": liquidity_fit(req.suitability.horizonteAnos, p),
         "cost": cost_score(p),
     }
@@ -183,7 +268,7 @@ def score_produto(
         {
             "fator": k,
             "contrib": fatores[k] * PESOS[k],
-            "frase": "",  # preenchido depois pelo módulo de justificativa
+            "frase": "",
         }
         for k in PESOS
     ]
@@ -199,9 +284,51 @@ def score_produto(
     }
 
 
-def top_recomendacoes(req: RecommendRequest, n: int = 3) -> list[dict]:
-    """Retorna os top-N produtos com maior score (sem justificativa ainda)."""
-    scored = [score_produto(req, p) for p in req.catalog]
-    scored = [s for s in scored if s is not None]
+def top_recomendacoes(
+    req: RecommendRequest, n: int = 3
+) -> tuple[list[dict], list[dict], int]:
+    """Retorna (top-N produtos pontuados, descartados agregados, total analisados).
+
+    Total = len(req.catalog). Descartados agregados por motivo, em ordem fixa.
+    Motivo 'inativo' não conta como decisão de scoring.
+    """
+    exposicao_emissor = exposicao_por_emissor(req.posicoes, req.catalog)
+    scored: list[dict] = []
+    motivos_count: dict[str, int] = {}
+    motivos_contexto: dict[str, dict] = {}
+
+    for p in req.catalog:
+        ok, motivo = passa_filtro(
+            req.cliente, req.suitability, exposicao_emissor, req.posicoes, p
+        )
+        if not ok:
+            if motivo == "inativo":
+                continue
+            motivos_count[motivo] = motivos_count.get(motivo, 0) + 1
+            if motivo == "concentracao_emissor" and motivo not in motivos_contexto:
+                exp = exposicao_emissor.get(p.emissor, 0.0)
+                pct = (
+                    round(100 * exp / req.cliente.patrimonio)
+                    if req.cliente.patrimonio > 0
+                    else 0
+                )
+                motivos_contexto[motivo] = {
+                    "emissor": p.emissor,
+                    "pctPatrimonio": pct,
+                }
+            continue
+        scored.append(_pontuar(req, p, exposicao_emissor))
+
     scored.sort(key=lambda s: s["score"], reverse=True)
-    return scored[:n]
+
+    descartados = [
+        {
+            "motivo": m,
+            "count": motivos_count[m],
+            **({"contexto": motivos_contexto[m]} if m in motivos_contexto else {}),
+        }
+        for m in PRIORIDADE_MOTIVOS
+        if m in motivos_count
+    ]
+
+    return scored[:n], descartados, len(req.catalog)

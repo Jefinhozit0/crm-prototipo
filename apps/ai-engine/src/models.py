@@ -23,6 +23,15 @@ CategoriaProduto = Literal[
     "CAMBIO",
 ]
 
+Tributacao = Literal["TRIBUTADO", "ISENTO", "INCENTIVADO"]
+
+MotivoDescarte = Literal[
+    "perfil_incompativel",
+    "concentracao_emissor",
+    "risco_alem_tolerancia",
+    "ja_sobrealocado",
+]
+
 Fator = Literal["profileMatch", "diversification", "yield", "liquidity", "cost"]
 
 
@@ -57,6 +66,7 @@ class Produto(BaseModel):
     categoria: CategoriaProduto
     rentabilidadeAno: float
     risco: int = Field(ge=1, le=5)
+    tributacao: Tributacao = "TRIBUTADO"
     perfilMinimo: PerfilInvestidor
     liquidez: str
     taxaAdmin: float | None = None
@@ -82,6 +92,18 @@ class Contribuicao(BaseModel):
     frase: str
 
 
+class DescarteContexto(BaseModel):
+    """Contexto opcional pra enriquecer a frase do descarte (ex: concentração)."""
+    emissor: str | None = None
+    pctPatrimonio: int | None = None
+
+
+class DescarteAgregado(BaseModel):
+    motivo: MotivoDescarte
+    count: int
+    contexto: DescarteContexto | None = None
+
+
 class Fatores(BaseModel):
     profileMatch: float
     diversification: float
@@ -104,4 +126,6 @@ class RecomendacaoOut(BaseModel):
 
 class RecommendResponse(BaseModel):
     recomendacoes: list[RecomendacaoOut]
-    engineVersion: str = "rule-engine-py-v1"
+    descartados: list[DescarteAgregado] = []
+    totalAnalisados: int = 0
+    engineVersion: str = "rule-engine-py-v1.3"

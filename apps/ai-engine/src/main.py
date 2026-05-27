@@ -9,9 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .justificativa import build_justificativa, preencher_frases_fator
 from .models import RecommendRequest, RecommendResponse
-from .rules import top_recomendacoes
+from .rules import exposicao_por_emissor, top_recomendacoes
 
-ENGINE_VERSION = "rule-engine-py-v1"
+ENGINE_VERSION = "rule-engine-py-v1.3"
 
 app = FastAPI(
     title="Capital Elite — AI Engine",
@@ -38,9 +38,11 @@ def health():
 def recommend(req: RecommendRequest) -> RecommendResponse:
     """
     Recebe contexto do cliente + catálogo. Devolve top-N recomendações
-    com score, justificativa em pt-BR e payload de auditoria.
+    com score, justificativa em pt-BR, payload de auditoria, e o
+    breakdown agregado dos descartes.
     """
-    scoreds = top_recomendacoes(req, req.topN)
+    scoreds, descartados, total = top_recomendacoes(req, req.topN)
+    exposicao_emissor = exposicao_por_emissor(req.posicoes, req.catalog)
 
     recomendacoes = []
     for scored in scoreds:
@@ -48,7 +50,7 @@ def recommend(req: RecommendRequest) -> RecommendResponse:
             scored, req.cliente, req.posicoes, req.suitability
         )
         justificativa = build_justificativa(
-            scored, req.cliente, req.posicoes, req.suitability
+            scored, req.cliente, req.posicoes, req.suitability, exposicao_emissor
         )
 
         recomendacoes.append(
@@ -64,5 +66,8 @@ def recommend(req: RecommendRequest) -> RecommendResponse:
         )
 
     return RecommendResponse(
-        recomendacoes=recomendacoes, engineVersion=ENGINE_VERSION
+        recomendacoes=recomendacoes,
+        descartados=descartados,
+        totalAnalisados=total,
+        engineVersion=ENGINE_VERSION,
     )

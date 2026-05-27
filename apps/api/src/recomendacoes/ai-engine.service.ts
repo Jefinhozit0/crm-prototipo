@@ -34,6 +34,7 @@ export type AiEngineRequest = {
     categoria: CategoriaProduto;
     rentabilidadeAno: number;
     risco: number;
+    tributacao: 'TRIBUTADO' | 'ISENTO' | 'INCENTIVADO';
     perfilMinimo: PerfilInvestidor;
     liquidez: string;
     taxaAdmin: number | null;
@@ -52,8 +53,20 @@ export type AiEngineRecomendacao = {
   contribs: Array<{ fator: string; contrib: number; frase: string }>;
 };
 
+export type AiEngineDescarte = {
+  motivo:
+    | 'perfil_incompativel'
+    | 'concentracao_emissor'
+    | 'risco_alem_tolerancia'
+    | 'ja_sobrealocado';
+  count: number;
+  contexto?: { emissor?: string; pctPatrimonio?: number };
+};
+
 export type AiEngineResponse = {
   recomendacoes: AiEngineRecomendacao[];
+  descartados: AiEngineDescarte[];
+  totalAnalisados: number;
   engineVersion: string;
 };
 

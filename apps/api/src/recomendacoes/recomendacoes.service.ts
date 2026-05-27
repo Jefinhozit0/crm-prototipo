@@ -61,6 +61,8 @@ export class RecomendacoesService {
               pesos: r.pesos,
               contribs: r.contribs,
               geradoPor: result.engineVersion,
+              descartadosDaRodada: result.descartados,
+              totalAnalisados: result.totalAnalisados,
             } as Prisma.InputJsonValue,
             status: StatusRecomendacao.PENDENTE,
             expiraEm: new Date(Date.now() + 30 * 86400000), // 30 dias
@@ -184,6 +186,7 @@ export class RecomendacoesService {
         categoria: p.categoria,
         rentabilidadeAno: Number(p.rentabilidadeAno.toString()),
         risco: p.risco,
+        tributacao: p.tributacao,
         perfilMinimo: p.perfilMinimo,
         liquidez: p.liquidez,
         taxaAdmin: p.taxaAdmin ? Number(p.taxaAdmin.toString()) : null,
