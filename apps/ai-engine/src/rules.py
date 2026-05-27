@@ -285,17 +285,23 @@ def _pontuar(
 
 
 def top_recomendacoes(
-    req: RecommendRequest, n: int = 3
+    req: RecommendRequest, n: int = 3, ml_scorer=None
 ) -> tuple[list[dict], list[dict], int]:
     """Retorna (top-N produtos pontuados, descartados agregados, total analisados).
 
-    Total = len(req.catalog). Descartados agregados por motivo, em ordem fixa.
-    Motivo 'inativo' não conta como decisão de scoring.
+    Filtros hard (passa_filtro) sempre rodam — compliance é determinístico.
+    Pontuação (`score`):
+      - Se `ml_scorer` for fornecido e estiver carregado, score = P(aprovação)
+        do modelo. Os fatores rule-based continuam preenchidos pra justificativa
+        (`score_rules` preservado).
+      - Senão, score = soma ponderada dos fatores (rule engine).
     """
     exposicao_emissor = exposicao_por_emissor(req.posicoes, req.catalog)
     scored: list[dict] = []
     motivos_count: dict[str, int] = {}
     motivos_contexto: dict[str, dict] = {}
+
+    use_ml = ml_scorer is not None and getattr(ml_scorer, "loaded", False)
 
     for p in req.catalog:
         ok, motivo = passa_filtro(
@@ -317,7 +323,24 @@ def top_recomendacoes(
                     "pctPatrimonio": pct,
                 }
             continue
-        scored.append(_pontuar(req, p, exposicao_emissor))
+
+        item = _pontuar(req, p, exposicao_emissor)
+        item["score_rules"] = item["score"]
+
+        if use_ml:
+            try:
+                proba = ml_scorer.predict_proba(
+                    req.cliente, req.suitability, req.posicoes, req.catalog, p
+                )
+                item["score"] = float(proba)
+                item["score_source"] = ml_scorer.version
+            except Exception:
+                # Falha de inferência no produto não derruba a rodada — usa fallback
+                item["score_source"] = "rule-engine-fallback"
+        else:
+            item["score_source"] = "rule-engine"
+
+        scored.append(item)
 
     scored.sort(key=lambda s: s["score"], reverse=True)
 
