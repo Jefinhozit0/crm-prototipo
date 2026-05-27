@@ -181,6 +181,12 @@ enum CategoriaProduto {
   CAMBIO
 }
 
+enum Tributacao {
+  TRIBUTADO
+  ISENTO
+  INCENTIVADO
+}
+
 model Produto {
   id               String           @id @default(cuid())
   nome             String
@@ -188,6 +194,7 @@ model Produto {
   categoria        CategoriaProduto
   rentabilidadeAno Decimal          @db.Decimal(6, 2) // % a.a.
   risco            Int // 1-5
+  tributacao       Tributacao       @default(TRIBUTADO)
   perfilMinimo     PerfilInvestidor
   liquidez         String // "D+0", "D+30", "Vencimento"
   taxaAdmin        Decimal?         @db.Decimal(5, 2)
