@@ -31,7 +31,9 @@ import { ApiError } from "@/lib/api";
 import { fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type {
+  DescarteAgregado,
   FatorRecomendacao,
+  MotivoDescarte,
   PerfilInvestidor,
   Recomendacao,
   StatusRecomendacao,
@@ -71,6 +73,22 @@ const fatorLabel: Record<FatorRecomendacao, string> = {
   cost: "Custo",
 };
 
+const motivoLabelCard: Record<MotivoDescarte, string> = {
+  perfil_incompativel: "Perfil incompatível",
+  concentracao_emissor: "Concentração",
+  risco_alem_tolerancia: "Risco além da tolerância",
+  ja_sobrealocado: "Já sobrealocado",
+};
+
+function formatarMotivoCard(d: DescarteAgregado): string {
+  if (d.motivo === "concentracao_emissor" && d.contexto?.emissor) {
+    return `${motivoLabelCard.concentracao_emissor} em ${d.contexto.emissor}${
+      d.contexto.pctPatrimonio !== undefined ? ` (${d.contexto.pctPatrimonio}%)` : ""
+    }`;
+  }
+  return motivoLabelCard[d.motivo];
+}
+
 const categoriaLabel: Record<string, string> = {
   RENDA_FIXA: "Renda Fixa",
   RENDA_VARIAVEL: "Renda Variável",
@@ -88,6 +106,9 @@ type Props = {
 
 export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [descartadosExpanded, setDescartadosExpanded] = useState(false);
+  const descartados = r.payload?.descartadosDaRodada;
+  const totalDescartados = descartados?.reduce((acc, d) => acc + d.count, 0) ?? 0;
   const [recusarOpen, setRecusarOpen] = useState(false);
   const aprovar = useAprovarRecomendacao();
 
@@ -218,6 +239,40 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
             <p className="text-[11px] text-muted-foreground">
               Gerada em {fmt.dateLong(r.geradoEm)}
             </p>
+          )}
+
+          {descartados && descartados.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setDescartadosExpanded((v) => !v)}
+                className="w-full flex items-center justify-between text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <span>Por que descartei {totalDescartados} produtos</span>
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform",
+                    descartadosExpanded && "rotate-180",
+                  )}
+                />
+              </button>
+
+              {descartadosExpanded && (
+                <div className="space-y-1.5 pt-3 border-t">
+                  {descartados.map((d) => (
+                    <div
+                      key={d.motivo}
+                      className="flex items-center justify-between text-xs"
+                    >
+                      <span className="text-foreground/80">
+                        {formatarMotivoCard(d)}
+                      </span>
+                      <span className="font-medium tabular-nums">{d.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </CardContent>
 

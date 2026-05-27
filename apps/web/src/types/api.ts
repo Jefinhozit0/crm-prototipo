@@ -45,6 +45,8 @@ export type CategoriaProduto =
   | "ESTRUTURADOS"
   | "CAMBIO";
 
+export type Tributacao = "TRIBUTADO" | "ISENTO" | "INCENTIVADO";
+
 export type Responsavel = {
   id: string;
   nome: string;
@@ -76,6 +78,7 @@ export type Produto = {
   categoria: CategoriaProduto;
   rentabilidadeAno: number;
   risco: 1 | 2 | 3 | 4 | 5;
+  tributacao: Tributacao;
   perfilMinimo: PerfilInvestidor;
   liquidez: string;
   taxaAdmin: number | null;
@@ -187,6 +190,18 @@ export type FatorRecomendacao =
   | "liquidity"
   | "cost";
 
+export type MotivoDescarte =
+  | "perfil_incompativel"
+  | "concentracao_emissor"
+  | "risco_alem_tolerancia"
+  | "ja_sobrealocado";
+
+export type DescarteAgregado = {
+  motivo: MotivoDescarte;
+  count: number;
+  contexto?: { emissor?: string; pctPatrimonio?: number };
+};
+
 export type Recomendacao = {
   id: string;
   clienteId: string;
@@ -213,6 +228,8 @@ export type Recomendacao = {
     pesos?: Record<FatorRecomendacao, number>;
     contribs?: { fator: FatorRecomendacao; contrib: number; frase: string }[];
     geradoPor?: string;
+    descartadosDaRodada?: DescarteAgregado[];
+    totalAnalisados?: number;
     [k: string]: unknown;
   };
 };

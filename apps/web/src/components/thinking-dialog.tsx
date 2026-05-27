@@ -14,7 +14,11 @@ import { ThinkingSteps } from "@/components/thinking-steps";
 import { useGenerateRecomendacao } from "@/lib/queries";
 import { ApiError } from "@/lib/api";
 import { fmt } from "@/lib/format";
-import type { GenerateResult } from "@/types/api";
+import type {
+  DescarteAgregado,
+  GenerateResult,
+  MotivoDescarte,
+} from "@/types/api";
 
 export type ThinkingClienteInput = {
   id: string;
@@ -23,6 +27,28 @@ export type ThinkingClienteInput = {
   posicoesCount?: number;
   perfil?: string;
 };
+
+const motivoLabel: Record<MotivoDescarte, string> = {
+  perfil_incompativel: "perfil incompatível",
+  concentracao_emissor: "concentração",
+  risco_alem_tolerancia: "risco além da tolerância",
+  ja_sobrealocado: "já sobrealocado",
+};
+
+function formatarDescarte(d: DescarteAgregado[] | undefined): string {
+  if (!d || d.length === 0) return "Aplicando filtros…";
+  const total = d.reduce((acc, x) => acc + x.count, 0);
+  const partes = d.map((x) =>
+    x.motivo === "concentracao_emissor" && x.contexto?.emissor
+      ? `${x.count} em ${x.contexto.emissor}${
+          x.contexto.pctPatrimonio !== undefined
+            ? ` (${x.contexto.pctPatrimonio}%)`
+            : ""
+        }`
+      : `${x.count} ${motivoLabel[x.motivo]}`,
+  );
+  return `Filtrei ${total}: ${partes.join(" · ")}`;
+}
 
 type Props = {
   cliente: ThinkingClienteInput | null;
@@ -75,14 +101,26 @@ export function ThinkingDialog({ cliente, open, onOpenChange }: Props) {
   if (!cliente) return null;
 
   const primeiroNome = cliente.nome.split(" ")[0];
+
+  // Dados frescos do result quando chegar — fallbacks razoáveis enquanto null
+  const firstPayload = result?.recomendacoes[0]?.payload;
+  const total = firstPayload?.totalAnalisados ?? 15;
+  const descartados = firstPayload?.descartadosDaRodada;
+  const geradas = result?.geradas ?? 3;
+
+  const descarteResumo =
+    descartados && descartados.length === 0
+      ? `Todos os ${total} produtos passaram pelos filtros`
+      : formatarDescarte(descartados);
+
   const steps = [
     `Carregando dados de ${primeiroNome}…`,
     cliente.posicoesCount !== undefined
       ? `Mapeando carteira atual (${fmt.brl(cliente.patrimonio)} em ${cliente.posicoesCount} posições)`
       : `Mapeando carteira atual (${fmt.brl(cliente.patrimonio)})`,
-    "Comparando contra catálogo BTG (10 produtos)",
-    "Aplicando 5 critérios de aderência",
-    "Selecionando top 3 e gerando justificativa em português",
+    `Comparando contra ${total} produtos do catálogo`,
+    descarteResumo,
+    `Selecionei o top ${geradas} e escrevi a justificativa em pt-BR`,
   ];
 
   return (
