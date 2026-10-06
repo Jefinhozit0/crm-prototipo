@@ -11,7 +11,16 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+
+  /** Código de referência devolvido pela API (X-Request-Id) — útil pro suporte */
+  get requestId(): string | undefined {
+    const p = this.payload as { requestId?: unknown } | undefined;
+    return typeof p?.requestId === "string" ? p.requestId : undefined;
+  }
 }
+
+const MSG_SEM_CONEXAO =
+  "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
 
 type FetchOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
@@ -35,30 +44,32 @@ function buildUrl(path: string, query?: FetchOptions["query"]) {
 }
 
 async function rawFetch(path: string, opts: FetchOptions): Promise<Response> {
-  const { body, query, headers, _noRetry: _, ...rest } = opts;
-  return fetch(buildUrl(path, query), {
-    ...rest,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...headers,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- removido do RequestInit
+  const { body, query, headers, _noRetry, ...rest } = opts;
+  try {
+    return await fetch(buildUrl(path, query), {
+      ...rest,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, MSG_SEM_CONEXAO);
+  }
 }
 
 let refreshInflight: Promise<boolean> | null = null;
 
-/** Tenta /auth/refresh uma única vez; coalesce chamadas concorrentes */
+/** Tenta /auth/refresh uma única vez; coalesce chamadas concorrentes da mesma aba */
 async function tryRefresh(): Promise<boolean> {
   if (refreshInflight) return refreshInflight;
   refreshInflight = (async () => {
     try {
-      const r = await rawFetch("/auth/refresh", {
-        method: "POST",
-        _noRetry: true,
-      });
+      const r = await rawFetch("/auth/refresh", { method: "POST", _noRetry: true });
       return r.ok;
     } catch {
       return false;
@@ -69,34 +80,44 @@ async function tryRefresh(): Promise<boolean> {
   return refreshInflight;
 }
 
+function irParaLogin() {
+  if (typeof window === "undefined" || window.location.pathname === "/login") return;
+  const from = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.replace(`/login?from=${from}`);
+}
+
 export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   let res = await rawFetch(path, opts);
 
-  // Auto-refresh: se 401 numa rota que não é /auth/*, tenta uma vez
+  // Access token expirado: renova e repete a request uma vez.
+  // Mesmo se o refresh falhar, repete: outra aba pode ter acabado de renovar os
+  // cookies (o servidor responde REFRESH_CONCORRENTE nesse caso).
   const isAuthRoute = path.startsWith("/auth/") || path.startsWith("auth/");
   if (res.status === 401 && !opts._noRetry && !isAuthRoute) {
-    const refreshed = await tryRefresh();
-    if (refreshed) {
-      res = await rawFetch(path, { ...opts, _noRetry: true });
-    } else if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-      // Sessão totalmente expirada — derruba pro login preservando destino atual
-      const from = encodeURIComponent(window.location.pathname);
-      window.location.replace(`/login?from=${from}`);
-    }
+    await tryRefresh();
+    res = await rawFetch(path, { ...opts, _noRetry: true });
+    if (res.status === 401) irParaLogin();
   }
 
   const text = await res.text();
   const data = text ? safeParse(text) : null;
 
   if (!res.ok) {
-    const msg =
-      (data && typeof data === "object" && "message" in data
-        ? String((data as { message: unknown }).message)
-        : null) ?? `HTTP ${res.status}`;
-    throw new ApiError(res.status, msg, data);
+    throw new ApiError(res.status, mensagemDeErro(res.status, data), data);
   }
 
   return data as T;
+}
+
+function mensagemDeErro(status: number, data: unknown): string {
+  if (data && typeof data === "object" && "message" in data) {
+    const m = (data as { message: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return "Serviço temporariamente indisponível. Tente novamente em instantes.";
+  }
+  return `Erro inesperado (HTTP ${status})`;
 }
 
 function safeParse(text: string): unknown {

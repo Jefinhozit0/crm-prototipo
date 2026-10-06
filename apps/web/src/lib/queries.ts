@@ -1,11 +1,18 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiFetch } from "./api";
 import type {
   AplicarSuitabilityResult,
   AuthUser,
   Cliente,
   ClienteDetalhado,
+  DashboardResumo,
   GenerateResult,
+  Interacao,
   LeadBoardColumn,
   Page,
   Produto,
@@ -53,6 +60,22 @@ export function useLogout() {
   });
 }
 
+// ----- Dashboard / Interações -----
+
+export function useDashboardResumo() {
+  return useQuery({
+    queryKey: ["dashboard", "resumo"],
+    queryFn: () => apiFetch<DashboardResumo>("/dashboard/resumo"),
+  });
+}
+
+export function useInteracoes(filters: { page?: number; limit?: number; clienteId?: string } = {}) {
+  return useQuery({
+    queryKey: ["interacoes", filters],
+    queryFn: () => apiFetch<Page<Interacao>>("/interacoes", { query: filters }),
+  });
+}
+
 // ----- Clientes -----
 
 export type ClientesFilters = {
@@ -71,6 +94,8 @@ export function useClientes(filters: ClientesFilters = {}) {
       apiFetch<Page<Cliente>>("/clientes", {
         query: filters,
       }),
+    // Mantém a lista anterior enquanto busca/filtra (sem piscar o skeleton)
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -158,6 +183,7 @@ export function useGenerateRecomendacao() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [RECOMENDACOES_KEY] });
       qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -172,6 +198,7 @@ export function useAprovarRecomendacao() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [RECOMENDACOES_KEY] });
       qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -226,6 +253,7 @@ export function useRecusarRecomendacao() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [RECOMENDACOES_KEY] });
       qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

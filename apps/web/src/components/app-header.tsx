@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, LogOut, Search } from "lucide-react";
+import { Bell, LogOut, Menu, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -15,6 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Marca, NavLinks } from "@/components/nav-links";
 import { cn } from "@/lib/utils";
 import { useLogout, useMe } from "@/lib/queries";
 
@@ -38,39 +41,69 @@ export function AppHeader() {
   const router = useRouter();
   const { data: user, isLoading } = useMe();
   const logout = useLogout();
+  const [menuAberto, setMenuAberto] = useState(false);
 
   async function handleLogout() {
     try {
       await logout.mutateAsync();
+    } catch {
+      // Mesmo se a API falhar, o cache local já foi limpo (onSettled) e o
+      // usuário precisa conseguir sair — sem rejeição não tratada no onClick.
     } finally {
       router.replace("/login");
     }
   }
 
   return (
-    <header className="h-16 border-b border-border bg-background/80 backdrop-blur-xl sticky top-0 z-20 flex items-center gap-4 px-6">
-      <div className="relative flex-1 max-w-md">
-        <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+    <header className="h-16 border-b border-border bg-background/80 backdrop-blur-xl sticky top-0 z-20 flex items-center gap-3 px-4 md:px-6">
+      {/* Menu mobile — a sidebar só aparece a partir de md */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        aria-label="Abrir menu de navegação"
+        onClick={() => setMenuAberto(true)}
+      >
+        <Menu className="h-5 w-5" aria-hidden />
+      </Button>
+      <Sheet open={menuAberto} onOpenChange={setMenuAberto}>
+        <SheetContent side="left" className="bg-sidebar text-sidebar-foreground p-0 w-72">
+          <div className="flex items-center px-5 h-16 border-b border-sidebar-border">
+            <Marca />
+          </div>
+          <SheetTitle className="sr-only">Navegação</SheetTitle>
+          <nav className="px-3 py-2" aria-label="Operação">
+            <NavLinks onNavigate={() => setMenuAberto(false)} />
+          </nav>
+        </SheetContent>
+      </Sheet>
+
+      <div className="relative flex-1 max-w-md hidden sm:block">
+        <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <Input
-          placeholder="Buscar clientes, leads, produtos…"
+          placeholder="Busca global (em breve)"
+          aria-label="Busca global — disponível em uma próxima versão"
+          disabled
           className="pl-9 h-9 bg-muted/40 border-muted"
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive" />
-          <span className="sr-only">Notificações</span>
+      <div className="flex items-center gap-2 ml-auto">
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled
+          title="Notificações — disponível em uma próxima versão"
+          aria-label="Notificações (em breve)"
+        >
+          <Bell className="h-4 w-4" aria-hidden />
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger
-            className={cn(
-              buttonVariants({ variant: "ghost" }),
-              "h-9 gap-2 px-2",
-            )}
+            className={cn(buttonVariants({ variant: "ghost" }), "h-9 gap-2 px-2")}
             disabled={!user}
+            aria-label={user ? `Conta de ${user.nome}` : "Carregando conta"}
           >
             {isLoading || !user ? (
               <>
@@ -108,8 +141,8 @@ export function AppHeader() {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled>Perfil</DropdownMenuItem>
-              <DropdownMenuItem disabled>Configurações</DropdownMenuItem>
+              <DropdownMenuItem disabled>Perfil (em breve)</DropdownMenuItem>
+              <DropdownMenuItem disabled>Configurações (em breve)</DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -117,7 +150,7 @@ export function AppHeader() {
               onClick={handleLogout}
               disabled={logout.isPending}
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4" aria-hidden />
               Sair
             </DropdownMenuItem>
           </DropdownMenuContent>

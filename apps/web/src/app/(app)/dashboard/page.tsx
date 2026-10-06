@@ -1,7 +1,18 @@
-import { CalendarDays, DollarSign, Sparkles, TrendingUp, Users } from "lucide-react";
+"use client";
+
+import Link from "next/link";
+import {
+  AlertTriangle,
+  ChevronRight,
+  DollarSign,
+  FileCheck2,
+  Sparkles,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { KpiCard } from "@/components/kpi-card";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -18,72 +29,76 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import {
-  kpisDashboard,
-  aumSerie,
-  captacaoSerie,
-  distribuicaoPerfil,
-  interacoesRecentes,
-} from "@/lib/mock-data";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState, TableSkeleton } from "@/components/query-states";
+import { useDashboardResumo, useInteracoes } from "@/lib/queries";
+import { aumSerieDemo, captacaoSerieDemo } from "@/lib/dados-demonstrativos";
+import { perfilLabel, tipoInteracaoLabel } from "@/lib/labels";
 import { fmt } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { DashboardCharts } from "./_components/dashboard-charts";
 
 export default function DashboardPage() {
+  const resumo = useDashboardResumo();
+  const interacoes = useInteracoes({ limit: 5 });
+  const r = resumo.data;
+
   return (
     <>
       <PageHeader
         title="Dashboard"
-        description="Visão geral da operação — AUM, pipeline e interações"
+        description="Visão atual da sua carteira — AUM, pipeline e pendências"
         actions={
-          <>
-            <Button variant="outline" size="sm">
-              <CalendarDays className="h-4 w-4" />
-              Últimos 30 dias
-            </Button>
-            <Button size="sm">
-              <Sparkles className="h-4 w-4" />
-              Gerar recomendação
-            </Button>
-          </>
+          <Link href="/recomendacao" className={cn(buttonVariants({ size: "sm" }))}>
+            <Sparkles className="h-4 w-4" aria-hidden />
+            Gerar recomendação
+          </Link>
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard
-          label="AUM total"
-          value={fmt.brl(kpisDashboard.aumTotal)}
-          delta={kpisDashboard.aumDelta}
-          icon={DollarSign}
-          tone="blue"
-          hint="Assets under management"
-        />
-        <KpiCard
-          label="Clientes ativos"
-          value={String(kpisDashboard.clientesAtivos)}
-          delta={kpisDashboard.clientesDelta}
-          icon={Users}
-          tone="emerald"
-        />
-        <KpiCard
-          label="Leads abertos"
-          value={String(kpisDashboard.leadsAbertos)}
-          delta={kpisDashboard.leadsDelta}
-          icon={TrendingUp}
-          tone="amber"
-        />
-        <KpiCard
-          label="Conversão 30d"
-          value={fmt.pct(kpisDashboard.conversao30d)}
-          delta={kpisDashboard.conversaoDelta}
-          icon={Sparkles}
-          tone="violet"
-        />
-      </div>
+      {resumo.error ? (
+        <div className="mb-6">
+          <ErrorState message={resumo.error.message} onRetry={() => resumo.refetch()} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {!r ? (
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[134px]" />)
+          ) : (
+            <>
+              <KpiCard
+                label="AUM total"
+                value={fmt.brl(r.aumTotal)}
+                icon={DollarSign}
+                tone="blue"
+                hint="Patrimônio dos clientes ativos"
+              />
+              <KpiCard label="Clientes ativos" value={String(r.clientesAtivos)} icon={Users} tone="emerald" />
+              <KpiCard
+                label="Leads abertos"
+                value={String(r.leadsAbertos)}
+                icon={TrendingUp}
+                tone="amber"
+                hint={`${fmt.brl(r.valorPipeline)} em valor estimado`}
+              />
+              <KpiCard
+                label="Recomendações pendentes"
+                value={String(r.recomendacoesPendentes)}
+                icon={Sparkles}
+                tone="violet"
+                hint="Aguardando decisão do assessor"
+              />
+            </>
+          )}
+        </div>
+      )}
 
       <DashboardCharts
-        aumSerie={aumSerie}
-        captacaoSerie={captacaoSerie}
-        distribuicaoPerfil={distribuicaoPerfil}
+        aumSerie={aumSerieDemo}
+        captacaoSerie={captacaoSerieDemo}
+        distribuicaoPerfil={
+          r ? r.distribuicaoPerfil.map((p) => ({ ...p, perfil: perfilLabel[p.perfil] })) : null
+        }
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-6">
@@ -93,62 +108,125 @@ export default function DashboardPage() {
             <CardDescription>Últimos contatos com clientes</CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Assunto</TableHead>
-                  <TableHead className="text-right">Data</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {interacoesRecentes.map((i) => (
-                  <TableRow key={i.id}>
-                    <TableCell className="font-medium">{i.clienteNome}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="capitalize">
-                        {i.tipo}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {i.assunto}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground text-sm">
-                      {fmt.date(i.data)}
-                    </TableCell>
+            {interacoes.isLoading && <TableSkeleton rows={4} />}
+            {interacoes.error && <ErrorState message={interacoes.error.message} />}
+            {interacoes.data && interacoes.data.data.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                Nenhuma interação registrada ainda.
+              </p>
+            )}
+            {interacoes.data && interacoes.data.data.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead className="hidden sm:table-cell">Assunto</TableHead>
+                    <TableHead className="text-right">Data</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {interacoes.data.data.map((i) => (
+                    <TableRow key={i.id}>
+                      <TableCell className="font-medium">
+                        <Link href={`/clientes/${i.cliente.id}`} className="hover:underline">
+                          {i.cliente.nome}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{tipoInteracaoLabel[i.tipo]}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground hidden sm:table-cell">
+                        {i.assunto}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground text-sm">
+                        {fmt.date(i.data)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Tarefas do dia</CardTitle>
-            <CardDescription>Agenda do assessor</CardDescription>
+            <CardTitle>Pendências</CardTitle>
+            <CardDescription>O que precisa da sua atenção</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {[
-              { hora: "09:30", titulo: "Call Mariana Andrade — revisão Q2" },
-              { hora: "11:00", titulo: "Follow-up Helena Sá (proposta)" },
-              { hora: "14:00", titulo: "Reunião Felipe Okabe — BDR S&P 500" },
-              { hora: "16:30", titulo: "Aprovação carteira — Bianca Lemos" },
-            ].map((t) => (
-              <div
-                key={t.hora}
-                className="flex items-start gap-3 rounded-md border border-border p-3"
-              >
-                <div className="text-xs font-mono text-muted-foreground pt-0.5 w-12 shrink-0">
-                  {t.hora}
-                </div>
-                <p className="text-sm">{t.titulo}</p>
-              </div>
-            ))}
+          <CardContent className="space-y-2">
+            {!r ? (
+              <>
+                <Skeleton className="h-14" />
+                <Skeleton className="h-14" />
+              </>
+            ) : (
+              <>
+                <Pendencia
+                  href="/recomendacao"
+                  icon={Sparkles}
+                  quantidade={r.recomendacoesPendentes}
+                  texto="recomendação(ões) aguardando aprovação ou recusa"
+                  vazio="Nenhuma recomendação pendente"
+                />
+                <Pendencia
+                  href="/leads"
+                  icon={FileCheck2}
+                  quantidade={r.clientesSemSuitabilityValida}
+                  texto="cliente(s) ativo(s) sem suitability válida — não podem receber recomendação"
+                  vazio="Todos os clientes ativos têm suitability válida"
+                  alerta
+                />
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
     </>
+  );
+}
+
+function Pendencia({
+  href,
+  icon: Icon,
+  quantidade,
+  texto,
+  vazio,
+  alerta,
+}: {
+  href: string;
+  icon: typeof Sparkles;
+  quantidade: number;
+  texto: string;
+  vazio: string;
+  alerta?: boolean;
+}) {
+  if (quantidade === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-border p-3 text-sm text-muted-foreground">
+        <Icon className="h-4 w-4 shrink-0" aria-hidden />
+        {vazio}
+      </div>
+    );
+  }
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "flex items-center gap-3 rounded-md border p-3 text-sm transition-colors hover:bg-muted/50",
+        alerta ? "border-amber-300 bg-amber-50/60" : "border-border",
+      )}
+    >
+      {alerta ? (
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" aria-hidden />
+      ) : (
+        <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+      )}
+      <span className="flex-1">
+        <strong className="tabular-nums">{quantidade}</strong> {texto}
+      </span>
+      <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+    </Link>
   );
 }

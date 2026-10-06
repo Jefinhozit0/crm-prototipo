@@ -133,13 +133,18 @@ export type Suitability = {
   versaoQuestionario: string;
   validoAte: string;
   aplicadoEm: string;
-  respostas: Record<string, unknown>;
 };
 
+export type SuitabilityResumo = Suitability & {
+  /** true quando validoAte já passou — cliente não pode receber recomendação */
+  vencida: boolean;
+  aplicadoPor: { id: string; nome: string } | null;
+};
+
+// A pontuação de cada opção fica só no servidor (exibir induz a resposta)
 export type OpcaoQuestionario = {
   id: string;
   label: string;
-  pontos: number;
 };
 
 export type PerguntaQuestionario = {
@@ -163,7 +168,7 @@ export type AplicarSuitabilityResult = {
 
 export type ClienteDetalhado = Cliente & {
   posicoes: Posicao[];
-  suitability: Suitability | null;
+  suitability: SuitabilityResumo | null;
   recomendacoes: Array<{
     id: string;
     produto: { id: string; nome: string; categoria: CategoriaProduto; emissor: string };
@@ -228,13 +233,53 @@ export type Recomendacao = {
     pesos?: Record<FatorRecomendacao, number>;
     contribs?: { fator: FatorRecomendacao; contrib: number; frase: string }[];
     geradoPor?: string;
+    /** Soma ponderada dos 5 fatores (o que a justificativa explica) */
+    scoreRegras?: number | null;
+    /** Origem do score: versão do modelo ML ou "rule-engine" */
+    scoreFonte?: string | null;
     descartadosDaRodada?: DescarteAgregado[];
     totalAnalisados?: number;
+    contexto?: {
+      suitabilityId: string;
+      perfilCalculado: PerfilInvestidor;
+      horizonteAnos: number;
+      toleranciaPerda: number;
+    };
+    aviso?: string;
     [k: string]: unknown;
   };
+};
+
+// ----- Dashboard -----
+
+export type DashboardResumo = {
+  aumTotal: number;
+  clientesAtivos: number;
+  leadsAbertos: number;
+  valorPipeline: number;
+  recomendacoesPendentes: number;
+  clientesSemSuitabilityValida: number;
+  distribuicaoPerfil: { perfil: PerfilInvestidor; quantidade: number; pct: number }[];
+};
+
+// ----- Interações -----
+
+export type TipoInteracao = "EMAIL" | "LIGACAO" | "REUNIAO" | "WHATSAPP" | "TAREFA" | "NOTA";
+
+export type Interacao = {
+  id: string;
+  tipo: TipoInteracao;
+  assunto: string;
+  resumo: string | null;
+  data: string;
+  cliente: { id: string; nome: string };
+  autor: { id: string; nome: string };
 };
 
 export type GenerateResult = {
   geradas: number;
   recomendacoes: Recomendacao[];
+  totalAnalisados: number;
+  descartados: DescarteAgregado[];
+  engineVersion: string;
 };

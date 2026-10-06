@@ -12,17 +12,10 @@ import { EmptyState, ErrorState, TableSkeleton } from "@/components/query-states
 import { useSuitabilityRecentes } from "@/lib/queries";
 import { fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { PerfilInvestidor } from "@/types/api";
-
-const perfilColor: Record<PerfilInvestidor, string> = {
-  CONSERVADOR: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-  MODERADO: "bg-blue-100 text-blue-700 hover:bg-blue-100",
-  ARROJADO: "bg-amber-100 text-amber-700 hover:bg-amber-100",
-  AGRESSIVO: "bg-red-100 text-red-700 hover:bg-red-100",
-};
+import { perfilColor, perfilLabel } from "@/lib/labels";
 
 export default function SuitabilityPage() {
-  const { data, isLoading, error } = useSuitabilityRecentes(50);
+  const { data, isLoading, error, refetch } = useSuitabilityRecentes(50);
 
   return (
     <>
@@ -38,7 +31,7 @@ export default function SuitabilityPage() {
           </CardContent>
         </Card>
       )}
-      {error && <ErrorState message={error.message} />}
+      {error && <ErrorState message={error.message} onRetry={() => refetch()} />}
       {data && data.length === 0 && (
         <EmptyState message="Nenhuma suitability aplicada ainda." />
       )}
@@ -65,7 +58,7 @@ export default function SuitabilityPage() {
                         Aplicada {fmt.dateLong(s.aplicadoEm)} · Validade até{" "}
                         {fmt.date(s.validoAte)}
                         {expirado && (
-                          <span className="text-destructive ml-1">(expirada)</span>
+                          <span className="text-destructive ml-1">(vencida)</span>
                         )}
                       </p>
                     </div>
@@ -80,7 +73,7 @@ export default function SuitabilityPage() {
                         className={cn("mt-1", perfilColor[s.perfilCalculado])}
                         variant="secondary"
                       >
-                        {s.perfilCalculado.toLowerCase()}
+                        {perfilLabel[s.perfilCalculado]}
                       </Badge>
                     </div>
                   </CardContent>

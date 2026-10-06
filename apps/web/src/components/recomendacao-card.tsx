@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Check, ChevronDown, Loader2, X } from "lucide-react";
+import { useId, useState } from "react";
+import { Check, ChevronDown, Info, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,24 +27,24 @@ import {
   useAprovarRecomendacao,
   useRecusarRecomendacao,
 } from "@/lib/queries";
+import { usePermissoes } from "@/lib/permissoes";
 import { ApiError } from "@/lib/api";
 import { fmt } from "@/lib/format";
+import {
+  AVISO_APOIO_DECISAO,
+  categoriaLabel,
+  perfilColor,
+  perfilLabel,
+  statusRecomendacaoLabel,
+} from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type {
   DescarteAgregado,
   FatorRecomendacao,
   MotivoDescarte,
-  PerfilInvestidor,
   Recomendacao,
   StatusRecomendacao,
 } from "@/types/api";
-
-const perfilColor: Record<PerfilInvestidor, string> = {
-  CONSERVADOR: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-  MODERADO: "bg-blue-100 text-blue-700 hover:bg-blue-100",
-  ARROJADO: "bg-amber-100 text-amber-700 hover:bg-amber-100",
-  AGRESSIVO: "bg-red-100 text-red-700 hover:bg-red-100",
-};
 
 const statusBadgeVariant: Record<
   StatusRecomendacao,
@@ -57,19 +57,11 @@ const statusBadgeVariant: Record<
   EXPIRADA: "secondary",
 };
 
-const statusLabel: Record<StatusRecomendacao, string> = {
-  PENDENTE: "Pendente",
-  APROVADA: "Aprovada",
-  RECUSADA: "Recusada",
-  ATIVA: "Ativa",
-  EXPIRADA: "Expirada",
-};
-
 const fatorLabel: Record<FatorRecomendacao, string> = {
   profileMatch: "Compatibilidade de perfil",
   diversification: "Diversificação",
-  yield: "Rentabilidade",
-  liquidity: "Liquidez",
+  yield: "Rentabilidade líquida",
+  liquidity: "Liquidez vs. horizonte",
   cost: "Custo",
 };
 
@@ -89,14 +81,9 @@ function formatarMotivoCard(d: DescarteAgregado): string {
   return motivoLabelCard[d.motivo];
 }
 
-const categoriaLabel: Record<string, string> = {
-  RENDA_FIXA: "Renda Fixa",
-  RENDA_VARIAVEL: "Renda Variável",
-  FUNDOS: "Fundos",
-  PREVIDENCIA: "Previdência",
-  ESTRUTURADOS: "Estruturados",
-  CAMBIO: "Câmbio",
-};
+function mensagemErro(e: unknown, padrao: string) {
+  return e instanceof ApiError ? e.message : padrao;
+}
 
 type Props = {
   recomendacao: Recomendacao;
@@ -107,30 +94,25 @@ type Props = {
 export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [descartadosExpanded, setDescartadosExpanded] = useState(false);
+  const [aprovarOpen, setAprovarOpen] = useState(false);
+  const [recusarOpen, setRecusarOpen] = useState(false);
+  const { podeOperar } = usePermissoes();
+  const idFatores = useId();
+  const idDescartes = useId();
+
   const descartados = r.payload?.descartadosDaRodada;
   const totalDescartados = descartados?.reduce((acc, d) => acc + d.count, 0) ?? 0;
-  const [recusarOpen, setRecusarOpen] = useState(false);
-  const aprovar = useAprovarRecomendacao();
+  const fonteMl = r.payload?.scoreFonte && !r.payload.scoreFonte.startsWith("rule-engine");
 
   const scorePct = Math.round(r.score * 100);
   const scoreColor =
     scorePct >= 80
-      ? "text-emerald-600"
+      ? "text-emerald-700"
       : scorePct >= 60
-        ? "text-amber-600"
+        ? "text-amber-700"
         : "text-muted-foreground";
   const progressColor =
     scorePct >= 80 ? "bg-emerald-500" : scorePct >= 60 ? "bg-amber-500" : "bg-slate-400";
-
-  async function handleAprovar() {
-    try {
-      await aprovar.mutateAsync(r.id);
-      toast.success(`Recomendação aprovada para ${r.cliente.nome}`);
-      onActionDone?.();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Erro ao aprovar");
-    }
-  }
 
   return (
     <>
@@ -141,7 +123,7 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
               <CardTitle className="text-base flex items-center gap-2 flex-wrap">
                 {r.cliente.nome}
                 <Badge className={perfilColor[r.cliente.perfil]} variant="secondary">
-                  {r.cliente.perfil.toLowerCase()}
+                  {perfilLabel[r.cliente.perfil]}
                 </Badge>
               </CardTitle>
               <CardDescription className="mt-1.5">
@@ -153,7 +135,7 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
               </CardDescription>
             </div>
             <Badge variant={statusBadgeVariant[r.status]} className="shrink-0">
-              {statusLabel[r.status]}
+              {statusRecomendacaoLabel[r.status]}
             </Badge>
           </div>
         </CardHeader>
@@ -170,49 +152,47 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
                 <span className="text-sm text-muted-foreground">/100</span>
               </p>
             </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-              <div
-                className={cn("h-full transition-all", progressColor)}
-                style={{ width: `${scorePct}%` }}
-              />
+            <div
+              className="h-1.5 bg-muted rounded-full overflow-hidden"
+              role="progressbar"
+              aria-label="Aderência"
+              aria-valuenow={scorePct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className={cn("h-full transition-all", progressColor)} style={{ width: `${scorePct}%` }} />
             </div>
           </div>
 
           {/* Justificativa */}
-          <div className="rounded-md bg-muted/40 p-3 border border-border">
-            <p className="text-sm leading-relaxed text-foreground/90 italic">
-              &ldquo;{r.justificativa}&rdquo;
-            </p>
-          </div>
+          <blockquote className="rounded-md bg-muted/40 p-3 border border-border">
+            <p className="text-sm leading-relaxed text-foreground/90">{r.justificativa}</p>
+          </blockquote>
 
-          {/* Detalhes (expansível) — só pra recomendações geradas pelo engine */}
+          {/* Detalhes (expansível) — só pra recomendações geradas pelo motor */}
           {r.payload?.contribs && r.payload.contribs.length > 0 ? (
             <>
               <button
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
-                className="w-full flex items-center justify-between text-xs text-muted-foreground hover:text-foreground transition-colors"
+                aria-expanded={expanded}
+                aria-controls={idFatores}
+                className="w-full flex items-center justify-between rounded text-xs text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-2 focus-visible:outline-ring"
               >
-                <span>Como cheguei nisso ({r.payload.contribs.length} fatores)</span>
+                <span>Como a sugestão foi calculada ({r.payload.contribs.length} fatores)</span>
                 <ChevronDown
-                  className={cn(
-                    "h-3.5 w-3.5 transition-transform",
-                    expanded && "rotate-180",
-                  )}
+                  className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
+                  aria-hidden
                 />
               </button>
 
               {expanded && (
-                <div className="space-y-2 pt-3 border-t">
+                <div id={idFatores} className="space-y-2 pt-3 border-t">
                   {[...r.payload.contribs]
                     .sort((a, b) => b.contrib - a.contrib)
                     .map((c) => {
-                      const fatorPct = Math.round(
-                        (r.payload.fatores?.[c.fator] ?? 0) * 100,
-                      );
-                      const pesoPct = Math.round(
-                        (r.payload.pesos?.[c.fator] ?? 0) * 100,
-                      );
+                      const fatorPct = Math.round((r.payload.fatores?.[c.fator] ?? 0) * 100);
+                      const pesoPct = Math.round((r.payload.pesos?.[c.fator] ?? 0) * 100);
                       return (
                         <div key={c.fator} className="space-y-1">
                           <div className="flex items-center justify-between text-xs">
@@ -221,24 +201,31 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
                               {fatorPct}% × peso {pesoPct}%
                             </span>
                           </div>
-                          <Progress value={fatorPct} className="h-1" />
+                          <Progress value={fatorPct} className="h-1" aria-label={fatorLabel[c.fator]} />
+                          {c.frase && <p className="text-[11px] text-muted-foreground">{c.frase}</p>}
                         </div>
                       );
                     })}
+                  {fonteMl && (
+                    <p className="text-[11px] text-muted-foreground pt-2 border-t flex gap-1.5">
+                      <Info className="h-3 w-3 shrink-0 mt-0.5" aria-hidden />
+                      A ordenação usou o modelo estatístico ({r.payload.scoreFonte}). Os fatores acima
+                      explicam a recomendação pelas regras
+                      {r.payload.scoreRegras != null &&
+                        ` (aderência por regras: ${Math.round(r.payload.scoreRegras * 100)}/100)`}
+                      .
+                    </p>
+                  )}
                   <p className="text-[11px] text-muted-foreground pt-2 border-t">
-                    Motor:{" "}
-                    <code className="font-mono">
-                      {r.payload.geradoPor ?? "—"}
-                    </code>{" "}
-                    · Gerado em {fmt.dateLong(r.geradoEm)}
+                    Motor: <code className="font-mono">{r.payload.geradoPor ?? "—"}</code> · Gerada em{" "}
+                    {fmt.dateTime(r.geradoEm)}
+                    {r.expiraEm && r.status === "PENDENTE" && ` · Válida até ${fmt.date(r.expiraEm)}`}
                   </p>
                 </div>
               )}
             </>
           ) : (
-            <p className="text-[11px] text-muted-foreground">
-              Gerada em {fmt.dateLong(r.geradoEm)}
-            </p>
+            <p className="text-[11px] text-muted-foreground">Gerada em {fmt.dateTime(r.geradoEm)}</p>
           )}
 
           {descartados && descartados.length > 0 && (
@@ -246,69 +233,73 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
               <button
                 type="button"
                 onClick={() => setDescartadosExpanded((v) => !v)}
-                className="w-full flex items-center justify-between text-xs text-muted-foreground hover:text-foreground transition-colors"
+                aria-expanded={descartadosExpanded}
+                aria-controls={idDescartes}
+                className="w-full flex items-center justify-between rounded text-xs text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-2 focus-visible:outline-ring"
               >
-                <span>Por que descartei {totalDescartados} produtos</span>
+                <span>Por que {totalDescartados} produto(s) foram descartados</span>
                 <ChevronDown
-                  className={cn(
-                    "h-3.5 w-3.5 transition-transform",
-                    descartadosExpanded && "rotate-180",
-                  )}
+                  className={cn("h-3.5 w-3.5 transition-transform", descartadosExpanded && "rotate-180")}
+                  aria-hidden
                 />
               </button>
 
               {descartadosExpanded && (
-                <div className="space-y-1.5 pt-3 border-t">
+                <ul id={idDescartes} className="space-y-1.5 pt-3 border-t">
                   {descartados.map((d) => (
-                    <div
-                      key={d.motivo}
-                      className="flex items-center justify-between text-xs"
-                    >
-                      <span className="text-foreground/80">
-                        {formatarMotivoCard(d)}
-                      </span>
+                    <li key={d.motivo} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground/80">{formatarMotivoCard(d)}</span>
                       <span className="font-medium tabular-nums">{d.count}</span>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </>
           )}
         </CardContent>
 
         {/* Ações / status footer */}
-        {r.status === "PENDENTE" && (
-          <div className="px-6 pb-5 pt-1 flex items-center justify-end gap-2 border-t mt-2 pt-4">
+        {r.status === "PENDENTE" && podeOperar && (
+          <div className="px-6 pb-5 flex items-center justify-end gap-2 border-t mt-2 pt-4">
             <Button size="sm" variant="ghost" onClick={() => setRecusarOpen(true)}>
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden />
               Recusar
             </Button>
-            <Button size="sm" onClick={handleAprovar} disabled={aprovar.isPending}>
-              {aprovar.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Check className="h-4 w-4" />
-              )}
+            <Button size="sm" onClick={() => setAprovarOpen(true)}>
+              <Check className="h-4 w-4" aria-hidden />
               Aprovar
             </Button>
           </div>
         )}
 
-        {r.status === "APROVADA" && r.aprovadoPor && r.aprovadoEm && (
-          <div className="px-6 pb-5 pt-1 border-t mt-2 pt-4 text-xs text-muted-foreground">
-            ✓ Aprovada por <span className="font-medium">{r.aprovadoPor.nome}</span>{" "}
-            em {fmt.dateLong(r.aprovadoEm)}
+        {r.status === "PENDENTE" && !podeOperar && (
+          <div className="px-6 pb-5 border-t mt-2 pt-4 text-xs text-muted-foreground">
+            Aguardando decisão do assessor responsável.
           </div>
         )}
 
-        {r.status === "RECUSADA" && r.recusaMotivo && (
-          <div className="px-6 pb-5 pt-1 border-t mt-2 pt-4">
-            <p className="text-xs text-muted-foreground mb-1">Motivo:</p>
-            <p className="text-sm">{r.recusaMotivo}</p>
+        {(r.status === "APROVADA" || r.status === "RECUSADA") && r.aprovadoPor && r.aprovadoEm && (
+          <div className="px-6 pb-5 border-t mt-2 pt-4 text-xs text-muted-foreground space-y-1">
+            <p>
+              {r.status === "APROVADA" ? "Aprovada" : "Recusada"} por{" "}
+              <span className="font-medium text-foreground">{r.aprovadoPor.nome}</span> em{" "}
+              {fmt.dateTime(r.aprovadoEm)}
+            </p>
+            {r.status === "RECUSADA" && r.recusaMotivo && (
+              <p>
+                Motivo: <span className="text-foreground">{r.recusaMotivo}</span>
+              </p>
+            )}
           </div>
         )}
       </Card>
 
+      <AprovarDialog
+        recomendacao={r}
+        open={aprovarOpen}
+        onOpenChange={setAprovarOpen}
+        onDone={() => onActionDone?.()}
+      />
       <RecusarDialog
         recomendacao={r}
         open={recusarOpen}
@@ -316,6 +307,71 @@ export function RecomendacaoCard({ recomendacao: r, onActionDone }: Props) {
         onDone={() => onActionDone?.()}
       />
     </>
+  );
+}
+
+// ============================================================
+// Dialog: Aprovar (confirmação — ação sensível e auditada)
+// ============================================================
+
+function AprovarDialog({
+  recomendacao: r,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  recomendacao: Recomendacao;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDone?: () => void;
+}) {
+  const aprovar = useAprovarRecomendacao();
+
+  async function handleAprovar() {
+    try {
+      await aprovar.mutateAsync(r.id);
+      toast.success(`Recomendação aprovada para ${r.cliente.nome}`);
+      onOpenChange(false);
+      onDone?.();
+    } catch (e) {
+      toast.error(mensagemErro(e, "Não foi possível aprovar a recomendação"));
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Aprovar recomendação?</DialogTitle>
+          <DialogDescription>
+            <strong>{r.produto.nome}</strong> para <strong>{r.cliente.nome}</strong> (perfil{" "}
+            {perfilLabel[r.cliente.perfil].toLowerCase()}).
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex gap-2">
+          <Info className="h-4 w-4 shrink-0" aria-hidden />
+          <p>
+            {AVISO_APOIO_DECISAO} Sua aprovação fica registrada na trilha de auditoria com data,
+            hora e usuário. Nenhuma ordem é enviada automaticamente.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={handleAprovar} disabled={aprovar.isPending}>
+            {aprovar.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <Check className="h-4 w-4" aria-hidden />
+            )}
+            Confirmar aprovação
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -335,21 +391,23 @@ function RecusarDialog({
   onDone?: () => void;
 }) {
   const [motivo, setMotivo] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
   const recusar = useRecusarRecomendacao();
 
   async function handleRecusar() {
     if (motivo.trim().length < 3) {
-      toast.error("Descreva o motivo em pelo menos 3 caracteres");
+      setErro("Descreva o motivo em pelo menos 3 caracteres.");
       return;
     }
+    setErro(null);
     try {
-      await recusar.mutateAsync({ id: recomendacao.id, motivo });
+      await recusar.mutateAsync({ id: recomendacao.id, motivo: motivo.trim() });
       toast.success("Recomendação recusada");
       onOpenChange(false);
       setMotivo("");
       onDone?.();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Erro ao recusar");
+      toast.error(mensagemErro(e, "Não foi possível recusar a recomendação"));
     }
   }
 
@@ -359,14 +417,14 @@ function RecusarDialog({
         <DialogHeader>
           <DialogTitle>Recusar recomendação</DialogTitle>
           <DialogDescription>
-            Por que essa sugestão não cabe agora? O motivo fica registrado pra
-            refinar o motor de IA no futuro.
+            Por que essa sugestão não cabe agora? O motivo fica registrado na auditoria e ajuda a
+            calibrar o motor.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 py-2">
           <Label htmlFor="motivo" className="text-xs">
-            Motivo
+            Motivo <span aria-hidden className="text-destructive">*</span>
           </Label>
           <Textarea
             id="motivo"
@@ -374,19 +432,24 @@ function RecusarDialog({
             value={motivo}
             onChange={(e) => setMotivo(e.target.value)}
             rows={3}
+            maxLength={500}
+            required
+            aria-invalid={!!erro}
+            aria-describedby={erro ? "motivo-erro" : undefined}
           />
+          {erro && (
+            <p id="motivo-erro" className="text-xs text-destructive">
+              {erro}
+            </p>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button
-            variant="destructive"
-            onClick={handleRecusar}
-            disabled={recusar.isPending}
-          >
-            {recusar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="destructive" onClick={handleRecusar} disabled={recusar.isPending}>
+            {recusar.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
             Recusar
           </Button>
         </DialogFooter>

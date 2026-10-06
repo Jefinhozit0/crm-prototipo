@@ -12,7 +12,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -27,29 +27,17 @@ import { ErrorState } from "@/components/query-states";
 import { ThinkingDialog } from "@/components/thinking-dialog";
 import { RecomendacaoDetalheDialog } from "@/components/recomendacao-detalhe-dialog";
 import { useClienteDetalhado } from "@/lib/queries";
+import { usePermissoes } from "@/lib/permissoes";
+import {
+  categoriaLabel,
+  perfilColor,
+  perfilLabel,
+  statusClienteLabel,
+  statusRecomendacaoLabel,
+} from "@/lib/labels";
 import { fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type {
-  CategoriaProduto,
-  PerfilInvestidor,
-  StatusRecomendacao,
-} from "@/types/api";
-
-const perfilColor: Record<PerfilInvestidor, string> = {
-  CONSERVADOR: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-  MODERADO: "bg-blue-100 text-blue-700 hover:bg-blue-100",
-  ARROJADO: "bg-amber-100 text-amber-700 hover:bg-amber-100",
-  AGRESSIVO: "bg-red-100 text-red-700 hover:bg-red-100",
-};
-
-const categoriaLabel: Record<CategoriaProduto, string> = {
-  RENDA_FIXA: "Renda Fixa",
-  RENDA_VARIAVEL: "Renda Variável",
-  FUNDOS: "Fundos",
-  PREVIDENCIA: "Previdência",
-  ESTRUTURADOS: "Estruturados",
-  CAMBIO: "Câmbio",
-};
+import type { CategoriaProduto, StatusRecomendacao } from "@/types/api";
 
 const categoriaCor: Record<CategoriaProduto, string> = {
   RENDA_FIXA: "bg-emerald-500",
@@ -86,7 +74,8 @@ export default function ClienteDetalhePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { data: cliente, isLoading, error } = useClienteDetalhado(id);
+  const { data: cliente, isLoading, error, refetch } = useClienteDetalhado(id);
+  const { podeOperar } = usePermissoes();
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [recomendacaoDetalheId, setRecomendacaoDetalheId] = useState<string | null>(null);
 
@@ -107,14 +96,27 @@ export default function ClienteDetalhePage({
     return (
       <>
         <PageHeader title="Cliente" />
-        <ErrorState message={error?.message} />
+        <ErrorState message={error?.message} onRetry={() => refetch()} />
       </>
     );
   }
 
+  const suitabilityValida = !!cliente.suitability && !cliente.suitability.vencida;
+  const motivoBloqueio = !cliente.suitability
+    ? "Aplique a suitability antes de gerar recomendações."
+    : cliente.suitability.vencida
+      ? "A suitability está vencida. Reaplique antes de gerar recomendações."
+      : cliente.status === "INATIVO" || cliente.status === "BLOQUEADO"
+        ? `Cliente ${cliente.status.toLowerCase()} não recebe recomendações.`
+        : null;
+
   // Calcula totais e % de alocação
   const totalAlocado = cliente.posicoes.reduce((acc, p) => acc + p.valor, 0);
   const naoAlocado = Math.max(0, cliente.patrimonio - totalAlocado);
+  // Base dos percentuais: patrimônio declarado, ou o total alocado se for maior
+  // (cadastro desatualizado). Evita divisão por zero e barras acima de 100%.
+  const base = Math.max(cliente.patrimonio, totalAlocado);
+  const pctDe = (v: number) => (base > 0 ? (v / base) * 100 : 0);
 
   // Agrupa posições por categoria
   const porCategoria = cliente.posicoes.reduce<
@@ -158,13 +160,10 @@ export default function ClienteDetalhePage({
                   className={perfilColor[cliente.perfil]}
                   variant="secondary"
                 >
-                  {cliente.perfil.toLowerCase()}
+                  {perfilLabel[cliente.perfil]}
                 </Badge>
-                <Badge
-                  variant={cliente.status === "ATIVO" ? "default" : "outline"}
-                  className="capitalize"
-                >
-                  {cliente.status.toLowerCase()}
+                <Badge variant={cliente.status === "ATIVO" ? "default" : "outline"}>
+                  {statusClienteLabel[cliente.status]}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mb-3">
@@ -203,14 +202,25 @@ export default function ClienteDetalhePage({
               <p className="text-2xl font-semibold tabular-nums mt-1">
                 {fmt.brl(cliente.patrimonio)}
               </p>
-              <Button
-                size="sm"
-                className="mt-3"
-                onClick={() => setThinkingOpen(true)}
-              >
-                <Sparkles className="h-4 w-4" />
-                Gerar recomendação
-              </Button>
+              {podeOperar && (
+                <>
+                  <Button
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => setThinkingOpen(true)}
+                    disabled={!!motivoBloqueio}
+                    aria-describedby={motivoBloqueio ? "motivo-bloqueio" : undefined}
+                  >
+                    <Sparkles className="h-4 w-4" aria-hidden />
+                    Gerar recomendação
+                  </Button>
+                  {motivoBloqueio && (
+                    <p id="motivo-bloqueio" className="text-[11px] text-amber-800 mt-1.5 max-w-[220px] md:ml-auto">
+                      {motivoBloqueio}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </CardContent>
@@ -243,7 +253,7 @@ export default function ClienteDetalhePage({
                   <div className="flex h-2 rounded-full overflow-hidden bg-muted">
                     {(Object.entries(porCategoria) as [CategoriaProduto, number][]).map(
                       ([cat, v]) => {
-                        const pct = (v / cliente.patrimonio) * 100;
+                        const pct = pctDe(v);
                         return (
                           <div
                             key={cat}
@@ -258,7 +268,7 @@ export default function ClienteDetalhePage({
                       <div
                         className="h-full bg-muted-foreground/20"
                         style={{
-                          width: `${(naoAlocado / cliente.patrimonio) * 100}%`,
+                          width: `${pctDe(naoAlocado)}%`,
                         }}
                       />
                     )}
@@ -266,7 +276,7 @@ export default function ClienteDetalhePage({
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                     {(Object.entries(porCategoria) as [CategoriaProduto, number][]).map(
                       ([cat, v]) => {
-                        const pct = (v / cliente.patrimonio) * 100;
+                        const pct = pctDe(v);
                         return (
                           <span key={cat} className="inline-flex items-center gap-1.5">
                             <span
@@ -280,7 +290,7 @@ export default function ClienteDetalhePage({
                     {naoAlocado > 0 && (
                       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                         <span className="h-2 w-2 rounded-full bg-muted-foreground/20" />
-                        Disponível {((naoAlocado / cliente.patrimonio) * 100).toFixed(0)}%
+                        Disponível {pctDe(naoAlocado).toFixed(0)}%
                       </span>
                     )}
                   </div>
@@ -288,7 +298,7 @@ export default function ClienteDetalhePage({
 
                 <div className="border-t pt-3 space-y-2">
                   {cliente.posicoes.map((pos) => {
-                    const pct = (pos.valor / cliente.patrimonio) * 100;
+                    const pct = pctDe(pos.valor);
                     return (
                       <div
                         key={pos.id}
@@ -346,7 +356,7 @@ export default function ClienteDetalhePage({
                     className={cn("mt-1", perfilColor[cliente.suitability.perfilCalculado])}
                     variant="secondary"
                   >
-                    {cliente.suitability.perfilCalculado.toLowerCase()}
+                    {perfilLabel[cliente.suitability.perfilCalculado]}
                   </Badge>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
@@ -366,31 +376,48 @@ export default function ClienteDetalhePage({
                   </div>
                   <div>
                     <p className="text-muted-foreground">Validade</p>
-                    <p className="font-medium">{fmt.date(cliente.suitability.validoAte)}</p>
+                    <p className={cn("font-medium", cliente.suitability.vencida && "text-destructive")}>
+                      {fmt.date(cliente.suitability.validoAte)}
+                      {cliente.suitability.vencida && " (vencida)"}
+                    </p>
                   </div>
-                </div>
-                <Link
-                  href={`/clientes/${id}/suitability`}
-                  className={cn(
-                    "w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background h-7 px-3 text-[0.8rem] font-medium hover:bg-muted transition-colors",
+                  {cliente.suitability.aplicadoPor && (
+                    <div className="col-span-2">
+                      <p className="text-muted-foreground">Aplicada por</p>
+                      <p className="font-medium">{cliente.suitability.aplicadoPor.nome}</p>
+                    </div>
                   )}
-                >
-                  Reaplicar
-                </Link>
+                </div>
+                {cliente.suitability.vencida && (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" role="status">
+                    Suitability vencida: o cliente não pode receber novas recomendações até reaplicar.
+                  </p>
+                )}
+                {podeOperar && (
+                  <Link
+                    href={`/clientes/${id}/suitability`}
+                    className={cn(
+                      buttonVariants({ variant: suitabilityValida ? "outline" : "default", size: "sm" }),
+                      "w-full",
+                    )}
+                  >
+                    Reaplicar questionário
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Cliente ainda não tem suitability aplicada.
                 </p>
-                <Link
-                  href={`/clientes/${id}/suitability`}
-                  className={cn(
-                    "w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-primary text-primary-foreground h-7 px-3 text-[0.8rem] font-medium hover:bg-primary/80 transition-colors",
-                  )}
-                >
-                  Aplicar agora
-                </Link>
+                {podeOperar && (
+                  <Link
+                    href={`/clientes/${id}/suitability`}
+                    className={cn(buttonVariants({ size: "sm" }), "w-full")}
+                  >
+                    Aplicar agora
+                  </Link>
+                )}
               </div>
             )}
           </CardContent>
@@ -457,9 +484,9 @@ export default function ClienteDetalhePage({
                     </div>
                     <Badge
                       variant={statusBadgeVariant[r.status]}
-                      className="shrink-0 capitalize text-xs"
+                      className="shrink-0 text-xs"
                     >
-                      {r.status.toLowerCase()}
+                      {statusRecomendacaoLabel[r.status]}
                     </Badge>
                   </button>
                 );

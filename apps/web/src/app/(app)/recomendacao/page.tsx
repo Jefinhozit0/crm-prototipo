@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Info, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,36 +28,38 @@ import {
 } from "@/components/thinking-dialog";
 import { RecomendacaoCard } from "@/components/recomendacao-card";
 import { useClientes, useRecomendacoes } from "@/lib/queries";
+import { usePermissoes } from "@/lib/permissoes";
+import { AVISO_APOIO_DECISAO, perfilLabel, statusRecomendacaoLabel } from "@/lib/labels";
 import { fmt } from "@/lib/format";
 import type { StatusRecomendacao } from "@/types/api";
-
-const statusLabel: Record<StatusRecomendacao, string> = {
-  PENDENTE: "Pendente",
-  APROVADA: "Aprovada",
-  RECUSADA: "Recusada",
-  ATIVA: "Ativa",
-  EXPIRADA: "Expirada",
-};
 
 export default function RecomendacaoPage() {
   const [status, setStatus] = useState<StatusRecomendacao>("PENDENTE");
   const [genOpen, setGenOpen] = useState(false);
   const [thinkingCliente, setThinkingCliente] =
     useState<ThinkingClienteInput | null>(null);
-  const { data, isLoading, error } = useRecomendacoes({ status, limit: 50 });
+  const { podeOperar } = usePermissoes();
+  const { data, isLoading, error, refetch } = useRecomendacoes({ status, limit: 50 });
 
   return (
     <>
       <PageHeader
-        title="Recomendações da IA"
-        description="Sugestões geradas pelo motor com score e justificativa explicável"
+        title="Recomendações"
+        description="Sugestões do motor com score e justificativa explicável, para avaliação do assessor"
         actions={
-          <Button size="sm" onClick={() => setGenOpen(true)}>
-            <Sparkles className="h-4 w-4" />
-            Gerar nova
-          </Button>
+          podeOperar && (
+            <Button size="sm" onClick={() => setGenOpen(true)}>
+              <Sparkles className="h-4 w-4" aria-hidden />
+              Gerar nova
+            </Button>
+          )
         }
       />
+
+      <p className="mb-4 flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        <Info className="h-4 w-4 shrink-0 mt-px" aria-hidden />
+        {AVISO_APOIO_DECISAO}
+      </p>
 
       <Tabs value={status} onValueChange={(v) => setStatus(v as StatusRecomendacao)}>
         <TabsList className="mb-4">
@@ -69,13 +71,15 @@ export default function RecomendacaoPage() {
       </Tabs>
 
       {isLoading && <CardGridSkeleton count={3} />}
-      {error && <ErrorState message={error.message} />}
+      {error && <ErrorState message={error.message} onRetry={() => refetch()} />}
       {data && data.data.length === 0 && (
         <EmptyState
           message={
             status === "PENDENTE"
-              ? "Nenhuma recomendação pendente. Clique em 'Gerar nova' pra rodar o motor."
-              : `Nenhuma recomendação ${statusLabel[status].toLowerCase()}.`
+              ? podeOperar
+                ? "Nenhuma recomendação pendente. Clique em “Gerar nova” para rodar o motor para um cliente."
+                : "Nenhuma recomendação pendente."
+              : `Nenhuma recomendação ${statusRecomendacaoLabel[status].toLowerCase()}.`
           }
         />
       )}
@@ -88,14 +92,16 @@ export default function RecomendacaoPage() {
         </div>
       )}
 
-      <GenerateDialog
-        open={genOpen}
-        onOpenChange={setGenOpen}
-        onPick={(c) => {
-          setGenOpen(false);
-          setThinkingCliente(c);
-        }}
-      />
+      {podeOperar && (
+        <GenerateDialog
+          open={genOpen}
+          onOpenChange={setGenOpen}
+          onPick={(c) => {
+            setGenOpen(false);
+            setThinkingCliente(c);
+          }}
+        />
+      )}
       <ThinkingDialog
         cliente={thinkingCliente}
         open={!!thinkingCliente}
@@ -108,7 +114,7 @@ export default function RecomendacaoPage() {
 }
 
 // ============================================================
-// Dialog: Picker pra escolher cliente antes de pensar
+// Dialog: escolher o cliente antes de rodar o motor
 // ============================================================
 
 function GenerateDialog({
@@ -121,10 +127,11 @@ function GenerateDialog({
   onPick: (cliente: ThinkingClienteInput) => void;
 }) {
   const [clienteId, setClienteId] = useState<string>("");
-  const { data: clientes } = useClientes({ limit: 100 });
+  const { data: clientes, isLoading, error } = useClientes({ limit: 100, status: "ATIVO", sort: "nome" });
+  // `items` faz o gatilho mostrar o nome do cliente, não o id
+  const itens = Object.fromEntries((clientes?.data ?? []).map((c) => [c.id, c.nome]));
 
   function handleGenerate() {
-    if (!clienteId) return;
     const cliente = clientes?.data.find((c) => c.id === clienteId);
     if (!cliente) return;
     onPick({
@@ -142,27 +149,40 @@ function GenerateDialog({
         <DialogHeader>
           <DialogTitle>Gerar recomendação</DialogTitle>
           <DialogDescription>
-            O motor vai analisar a carteira atual do cliente, comparar com o catálogo
-            de produtos e devolver as 3 melhores sugestões com justificativa.
+            O motor analisa a carteira atual e a suitability vigente do cliente, aplica os filtros de
+            adequação e devolve até 3 sugestões com justificativa.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 py-2">
           <Label htmlFor="cliente" className="text-xs">
-            Cliente
+            Cliente ativo
           </Label>
-          <Select value={clienteId} onValueChange={(v) => setClienteId(v ?? "")}>
-            <SelectTrigger id="cliente" className="w-full">
-              <SelectValue placeholder="Selecione um cliente" />
-            </SelectTrigger>
-            <SelectContent>
-              {clientes?.data.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.nome} · {c.perfil.toLowerCase()} · {fmt.brl(c.patrimonio)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {error ? (
+            <p className="text-xs text-destructive" role="alert">
+              Não foi possível carregar os clientes: {error.message}
+            </p>
+          ) : clientes && clientes.data.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nenhum cliente ativo na sua carteira.</p>
+          ) : (
+            <Select
+              items={itens}
+              value={clienteId}
+              onValueChange={(v) => setClienteId(v ?? "")}
+              disabled={isLoading}
+            >
+              <SelectTrigger id="cliente" className="w-full">
+                <SelectValue placeholder={isLoading ? "Carregando clientes…" : "Selecione um cliente"} />
+              </SelectTrigger>
+              <SelectContent>
+                {clientes?.data.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.nome} · {perfilLabel[c.perfil].toLowerCase()} · {fmt.brl(c.patrimonio)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         <DialogFooter>
@@ -170,7 +190,7 @@ function GenerateDialog({
             Cancelar
           </Button>
           <Button onClick={handleGenerate} disabled={!clienteId}>
-            <Sparkles className="h-4 w-4" />
+            <Sparkles className="h-4 w-4" aria-hidden />
             Gerar
           </Button>
         </DialogFooter>
