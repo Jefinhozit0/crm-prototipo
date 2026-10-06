@@ -5,9 +5,10 @@ Cada recomendação ganha:
   - frases técnicas curtas por fator (usadas no "Como cheguei nisso" do front)
   - uma justificativa em narrativa de 1ª pessoa (lead da recomendação)
 """
-from .models import Cliente, Posicao, Produto, Suitability
-
 import os
+
+from .models import Cliente, Posicao, Produto, Suitability
+from .rules import emissor_soberano
 
 CASA_DISTRIBUI = os.getenv("CRM_CASA_DISTRIBUI", "que distribuímos")
 
@@ -19,6 +20,13 @@ CATEGORIA_LABEL: dict[str, str] = {
     "ESTRUTURADOS": "produtos estruturados",
     "CAMBIO": "câmbio",
 }
+
+
+def anos(n: int) -> str:
+    """"1 ano" / "5 anos" / "menos de 1 ano" (horizonte 0)."""
+    if n <= 0:
+        return "menos de 1 ano"
+    return "1 ano" if n == 1 else f"{n} anos"
 
 
 def humanizar_patrimonio(v: float) -> str:
@@ -85,9 +93,9 @@ def frase_fator(
     if fator == "yield":
         rent = f"{p.rentabilidadeAno:.1f}".replace(".", ",")
         if p.tributacao == "ISENTO":
-            base = f"Rentabilidade de {rent}% a.a. **isenta de IR**"
+            base = f"Rentabilidade de {rent}% a.a. isenta de IR"
         elif p.tributacao == "INCENTIVADO":
-            base = f"Rentabilidade de {rent}% a.a. **incentivada (isenta de IR pra PF)**"
+            base = f"Rentabilidade de {rent}% a.a. incentivada (isenta de IR pra PF)"
         else:
             base = f"Rentabilidade de {rent}% a.a."
         if valor > 0.7:
@@ -97,7 +105,7 @@ def frase_fator(
         return f"{base}."
 
     if fator == "liquidity":
-        h = "horizonte"  # placeholder — preenchido por quem chama
+        h = f"horizonte de {anos(suitability.horizonteAnos)}"
         if valor > 0.7:
             return (
                 f"Liquidez {p.liquidez} alinhada ao {h} declarado pelo cliente."
@@ -169,7 +177,7 @@ def abertura(
 
     if dominante == "liquidity":
         return (
-            f"Considerando o horizonte de {suitability.horizonteAnos} anos "
+            f"Considerando o horizonte de {anos(suitability.horizonteAnos)} "
             f"declarado por {primeiro}, a liquidez {p.liquidez} do {p.nome} "
             f"cai bem."
         )
@@ -238,7 +246,7 @@ def endorsement(
         if valor >= 0.7:
             return (
                 f"a liquidez {p.liquidez} cabe folgadamente no horizonte de "
-                f"{suitability.horizonteAnos} anos"
+                f"{anos(suitability.horizonteAnos)}"
             )
         if valor >= 0.4:
             return f"a liquidez {p.liquidez} é aceitável pra esse horizonte"
@@ -313,19 +321,21 @@ def build_justificativa(
         proposta(dom, p, secundarios, fatores, suitability),
     ]
 
-    # Nota de diversificação de emissor — só se cliente está concentrado em OUTRO emissor
-    if exposicao_emissor and cliente.patrimonio > 0:
-        top_emissor = max(exposicao_emissor.items(), key=lambda kv: kv[1], default=None)
-        if top_emissor:
-            top_nome, top_valor = top_emissor
-            top_pct = top_valor / cliente.patrimonio
-            if top_pct > 0.20 and top_nome != p.emissor:
-                pct_int = round(top_pct * 100)
-                partes.append(
-                    f"Optei pelo {p.emissor} ao invés de outras opções da {top_nome}: "
-                    f"você já tem {pct_int}% do patrimônio nesse emissor — "
-                    f"diversificar emissor é higiene de risco."
-                )
+    # Nota de diversificação de emissor — só se o cliente está concentrado em OUTRO
+    # emissor privado (título público federal não conta como risco de emissor)
+    privados = {
+        e: v for e, v in (exposicao_emissor or {}).items() if not emissor_soberano(e)
+    }
+    if privados and cliente.patrimonio > 0:
+        top_nome, top_valor = max(privados.items(), key=lambda kv: kv[1])
+        top_pct = top_valor / cliente.patrimonio
+        if top_pct > 0.20 and top_nome != p.emissor:
+            pct_int = round(top_pct * 100)
+            partes.append(
+                f"Optei por um emissor diferente de {top_nome}: o cliente já tem "
+                f"{pct_int}% do patrimônio nesse emissor, e diversificar emissores "
+                f"reduz o risco de concentração."
+            )
 
     return " ".join(part for part in partes if part)
 
@@ -341,12 +351,6 @@ def preencher_frases_fator(
     fatores: dict[str, float] = scored["fatores"]
 
     for c in scored["contribs"]:
-        frase = frase_fator(
+        c["frase"] = frase_fator(
             c["fator"], fatores[c["fator"]], cliente, posicoes, p, suitability
         )
-        if c["fator"] == "liquidity":
-            # frase_fator usa placeholder "horizonte" — substituir aqui
-            frase = frase.replace(
-                "horizonte", f"horizonte de {suitability.horizonteAnos} anos"
-            )
-        c["frase"] = frase

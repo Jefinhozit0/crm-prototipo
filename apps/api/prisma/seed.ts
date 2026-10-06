@@ -17,17 +17,16 @@ import {
   AcaoAuditoria,
   Tributacao,
 } from '@prisma/client';
-import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { hashCpf } from '../src/clientes/cpf';
 
 const prisma = new PrismaClient();
 
 // Senha de dev para os 3 usuários seedados — TROQUE EM PRODUÇÃO.
 const DEV_PASSWORD = 'Senha123!';
 
-function hash(value: string) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
+// Mesmo HMAC da API (src/clientes/cpf.ts). Os CPFs do seed são fictícios.
+const CPF_HASH_SECRET = process.env.CPF_HASH_SECRET || 'dev-somente-local-cpf-hash-secret';
 
 function maskCpf(cpf: string) {
   const digits = cpf.replace(/\D/g, '');
@@ -37,7 +36,16 @@ function maskCpf(cpf: string) {
 
 
 async function main() {
+  // O seed APAGA todas as tabelas. Trava contra execução acidental num banco real.
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_ALLOW_RESET !== 'true') {
+    throw new Error(
+      'Seed bloqueado em NODE_ENV=production: ele apaga todos os dados. ' +
+        'Se for mesmo um ambiente descartável, rode com SEED_ALLOW_RESET=true.',
+    );
+  }
+
   console.log('🌱 Limpando dados existentes...');
+  await prisma.refreshToken.deleteMany();
 
   // Ordem importa por causa das FKs
   await prisma.auditoria.deleteMany();
@@ -373,7 +381,7 @@ async function main() {
           nome: c.nome,
           email: c.email,
           telefone: c.telefone,
-          cpfHash: hash(c.cpf),
+          cpfHash: hashCpf(c.cpf, CPF_HASH_SECRET),
           cpfMasked: maskCpf(c.cpf),
           cidade: c.cidade,
           uf: c.uf,

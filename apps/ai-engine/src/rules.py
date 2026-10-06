@@ -1,18 +1,24 @@
 """
-Motor de regras — porte 1:1 da versão TypeScript em apps/api/src/recomendacoes/ia/.
+Motor de regras — fonte única da lógica de recomendação.
 
-Os fatores, pesos e lógica são idênticos. Qualquer divergência aqui exige
-acertar com o TS pra manter consistência durante a migração.
+(A versão TypeScript que existia em apps/api/src/recomendacoes/ia/ foi removida:
+não era chamada por nenhum endpoint e já divergia desta — sem tributação, sem
+filtro de risco e sem concentração por emissor.)
+
+Isto é APOIO À DECISÃO: filtra e ordena produtos com regras explícitas. Não
+substitui a análise do assessor nem os controles de compliance.
 """
+import logging
+
 from .models import (
-    CategoriaProduto,
     Cliente,
-    PerfilInvestidor,
     Posicao,
     Produto,
     RecommendRequest,
     Suitability,
 )
+
+logger = logging.getLogger(__name__)
 
 # Ordem ordinal dos perfis (mais conservador → mais agressivo)
 PERFIL_ORDEM: dict[str, int] = {
@@ -119,6 +125,15 @@ def liquidez_em_meses(liquidez: str) -> float:
 
 LIMITE_CONCENTRACAO_EMISSOR = 0.30  # 30% do patrimônio em um emissor já é demais
 
+# Risco soberano não entra no limite por emissor (mesma lógica da regulação de
+# fundos, que isenta títulos públicos federais dos limites por emissor).
+# Concentração em uma única CLASSE continua coberta pelo fator de diversificação.
+EMISSORES_SOBERANOS = {"tesouro nacional"}
+
+
+def emissor_soberano(emissor: str) -> bool:
+    return emissor.strip().lower() in EMISSORES_SOBERANOS
+
 PRIORIDADE_MOTIVOS: list[str] = [
     "perfil_incompativel",
     "concentracao_emissor",
@@ -167,7 +182,7 @@ def passa_filtro(
     if drawdown_esperado > suitability.toleranciaPerda * 1.5:
         return (False, "risco_alem_tolerancia")
 
-    if cliente.patrimonio > 0:
+    if cliente.patrimonio > 0 and not emissor_soberano(p.emissor):
         exp_emissor = exposicao_emissor.get(p.emissor, 0.0)
         if exp_emissor / cliente.patrimonio > LIMITE_CONCENTRACAO_EMISSOR:
             return (False, "concentracao_emissor")
@@ -218,7 +233,9 @@ def diversification(
 
 
 def yield_relativo(p: Produto, catalog: list[Produto], horizonte_anos: int) -> float:
-    mesma = [x for x in catalog if x.categoria == p.categoria]
+    """Posição do yield líquido do produto entre os ATIVOS da mesma categoria (0..1).
+    Categoria com um único produto (ou todos iguais) → 0.5 neutro."""
+    mesma = [x for x in catalog if x.categoria == p.categoria and x.ativo]
     if len(mesma) <= 1:
         return 0.5
     liquidos = [yield_liquido(x, horizonte_anos) for x in mesma]
@@ -329,13 +346,18 @@ def top_recomendacoes(
 
         if use_ml:
             try:
-                proba = ml_scorer.predict_proba(
-                    req.cliente, req.suitability, req.posicoes, req.catalog, p
+                proba = float(
+                    ml_scorer.predict_proba(
+                        req.cliente, req.suitability, req.posicoes, req.catalog, p
+                    )
                 )
-                item["score"] = float(proba)
+                if proba != proba:  # NaN
+                    raise ValueError("modelo devolveu NaN")
+                item["score"] = clamp(proba)
                 item["score_source"] = ml_scorer.version
-            except Exception:
-                # Falha de inferência no produto não derruba a rodada — usa fallback
+            except Exception:  # noqa: BLE001
+                # Falha de inferência no produto não derruba a rodada — usa as regras
+                logger.warning("Falha na inferência ML; usando score de regras")
                 item["score_source"] = "rule-engine-fallback"
         else:
             item["score_source"] = "rule-engine"

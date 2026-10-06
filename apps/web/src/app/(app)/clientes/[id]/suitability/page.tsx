@@ -17,22 +17,18 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import { ErrorState } from "@/components/query-states";
+import { EmptyState, ErrorState } from "@/components/query-states";
+import { usePermissoes } from "@/lib/permissoes";
 import {
   useAplicarSuitability,
   useClienteDetalhado,
   useQuestionario,
 } from "@/lib/queries";
 import { ApiError } from "@/lib/api";
+import { fmt } from "@/lib/format";
+import { perfilColor, perfilLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
-import type { AplicarSuitabilityResult, PerfilInvestidor } from "@/types/api";
-
-const perfilColor: Record<PerfilInvestidor, string> = {
-  CONSERVADOR: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-  MODERADO: "bg-blue-100 text-blue-700 hover:bg-blue-100",
-  ARROJADO: "bg-amber-100 text-amber-700 hover:bg-amber-100",
-  AGRESSIVO: "bg-red-100 text-red-700 hover:bg-red-100",
-};
+import type { AplicarSuitabilityResult } from "@/types/api";
 
 export default function SuitabilityFormPage({
   params,
@@ -44,11 +40,21 @@ export default function SuitabilityFormPage({
   const { data: cliente } = useClienteDetalhado(id);
   const { data: questionario, isLoading, error } = useQuestionario();
   const aplicar = useAplicarSuitability();
+  const permissoes = usePermissoes();
 
   const [respostas, setRespostas] = useState<Record<string, string>>({});
   const [resultado, setResultado] = useState<AplicarSuitabilityResult | null>(null);
 
-  if (isLoading) {
+  if (!permissoes.carregando && !permissoes.podeOperar) {
+    return (
+      <>
+        <PageHeader title="Suitability" />
+        <EmptyState message="Seu perfil de acesso permite consultar, mas não aplicar suitability. Procure o assessor responsável." />
+      </>
+    );
+  }
+
+  if (isLoading || permissoes.carregando) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-8 w-48" />
@@ -143,13 +149,15 @@ export default function SuitabilityFormPage({
             <Card key={p.id}>
               <CardHeader>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-muted-foreground font-mono tabular-nums">
+                  <span className="text-xs text-muted-foreground font-mono tabular-nums" aria-hidden>
                     {String(idx + 1).padStart(2, "0")}.
                   </span>
-                  <CardTitle className="text-base flex-1">{p.pergunta}</CardTitle>
+                  <CardTitle id={`pergunta-${p.id}`} className="text-base flex-1">
+                    {p.pergunta}
+                  </CardTitle>
                   {selecionada && (
-                    <span className="text-emerald-600">
-                      <Check className="h-4 w-4" />
+                    <span className="text-emerald-700">
+                      <Check className="h-4 w-4" aria-label="Respondida" />
                     </span>
                   )}
                 </div>
@@ -157,22 +165,33 @@ export default function SuitabilityFormPage({
                   <CardDescription className="ml-7">{p.ajuda}</CardDescription>
                 )}
               </CardHeader>
-              <CardContent className="ml-7 space-y-1.5">
+              <CardContent
+                className="ml-7 space-y-1.5"
+                role="radiogroup"
+                aria-labelledby={`pergunta-${p.id}`}
+              >
                 {p.opcoes.map((o) => {
                   const ativo = selecionada === o.id;
                   return (
-                    <button
+                    <label
                       key={o.id}
-                      type="button"
-                      onClick={() => setResposta(p.id, o.id)}
                       className={cn(
-                        "w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md border transition-colors",
+                        "w-full cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-md border transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
                         ativo
                           ? "border-primary bg-primary/5"
                           : "border-border hover:bg-muted/40",
                       )}
                     >
+                      <input
+                        type="radio"
+                        name={p.id}
+                        value={o.id}
+                        checked={ativo}
+                        onChange={() => setResposta(p.id, o.id)}
+                        className="sr-only"
+                      />
                       <span
+                        aria-hidden
                         className={cn(
                           "h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
                           ativo
@@ -181,10 +200,7 @@ export default function SuitabilityFormPage({
                         )}
                       />
                       <span className="text-sm flex-1">{o.label}</span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums">
-                        {o.pontos} pts
-                      </span>
-                    </button>
+                    </label>
                   );
                 })}
               </CardContent>
@@ -257,7 +273,7 @@ function ResultadoCard({
               className={cn("text-base px-3 py-1", perfilColor[resultado.perfilNovo])}
               variant="secondary"
             >
-              {resultado.perfilNovo.toLowerCase()}
+              {perfilLabel[resultado.perfilNovo]}
             </Badge>
             {resultado.mudou && (
               <p className="text-xs text-muted-foreground mt-3">
@@ -266,7 +282,7 @@ function ResultadoCard({
                   className={cn("mx-1", perfilColor[resultado.perfilAnterior])}
                   variant="secondary"
                 >
-                  {resultado.perfilAnterior.toLowerCase()}
+                  {perfilLabel[resultado.perfilAnterior]}
                 </Badge>
                 — perfil de <strong>{clienteNome}</strong> foi atualizado.
               </p>
@@ -279,11 +295,11 @@ function ResultadoCard({
           </div>
 
           <div className="text-xs text-muted-foreground border-t pt-4">
-            Validade da avaliação: 24 meses · Versão do questionário:{" "}
-            {resultado.suitability.versaoQuestionario}
+            Válida até {fmt.date(resultado.suitability.validoAte)} (24 meses) · Questionário{" "}
+            {resultado.suitability.versaoQuestionario} · Registrada na trilha de auditoria
           </div>
 
-          <div className="flex items-center justify-center gap-2 pt-2">
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={onRefazer}>
               Refazer
             </Button>
@@ -291,13 +307,11 @@ function ResultadoCard({
               Voltar para {clienteNome}
             </Button>
             <Link
-              href={`/recomendacao`}
+              href={`/clientes/${clienteId}`}
               className="text-xs text-muted-foreground hover:text-foreground ml-2"
             >
-              Gerar nova IA →
+              Gerar recomendações para este cliente →
             </Link>
-            {/* clienteId disponível pra navegação futura */}
-            <span className="hidden">{clienteId}</span>
           </div>
         </CardContent>
       </Card>

@@ -38,9 +38,10 @@ export class JwtAuthGuard implements CanActivate {
       const secret = this.config.get<string>('JWT_SECRET');
       const payload = await this.jwt.verifyAsync<AuthUser & { type: string }>(token, {
         secret,
+        algorithms: ['HS256'],
       });
 
-      if (payload.type !== 'access') {
+      if (payload.type !== 'access' || !payload.id || !payload.role) {
         throw new UnauthorizedException('Tipo de token inválido');
       }
 

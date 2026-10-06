@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { EmBreveButton } from "@/components/demo";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/query-states";
@@ -30,7 +30,7 @@ const estagioCor: Record<EstagioPipeline, string> = {
 };
 
 export default function PipelinePage() {
-  const { data, isLoading, error } = useLeadsBoard();
+  const { data, isLoading, error, refetch } = useLeadsBoard();
 
   const totalPipeline = data?.reduce((acc, col) => acc + col.total, 0) ?? 0;
   const totalLeads = data?.reduce((acc, col) => acc + col.count, 0) ?? 0;
@@ -45,14 +45,14 @@ export default function PipelinePage() {
             : "Carregando funil..."
         }
         actions={
-          <Button size="sm">
-            <Plus className="h-4 w-4" />
+          <EmBreveButton variant="default">
+            <Plus className="h-4 w-4" aria-hidden />
             Nova oportunidade
-          </Button>
+          </EmBreveButton>
         }
       />
 
-      {error && <ErrorState message={error.message} />}
+      {error && <ErrorState message={error.message} onRetry={() => refetch()} />}
 
       {isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -86,11 +86,11 @@ export default function PipelinePage() {
                 {col.itens.map((lead) => (
                   <Card
                     key={lead.id}
-                    className="hover:shadow-sm transition-shadow cursor-pointer"
+                    className="transition-shadow"
                   >
                     <CardContent className="p-3 space-y-2">
                       <p className="font-medium text-sm leading-tight">{lead.nome}</p>
-                      <p className="font-mono text-sm text-emerald-600 font-semibold tabular-nums">
+                      <p className="font-mono text-sm text-emerald-700 font-semibold tabular-nums">
                         {fmt.brl(lead.valorEstimado)}
                       </p>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">

@@ -1,6 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditoriaService } from '../auditoria/auditoria.service';
+import type { ContextoRequisicao } from '../common/request-context';
+import type { AuthUser } from '../auth/decorators/current-user.decorator';
+import { escopoCliente, garantirClienteNoEscopo } from '../auth/escopo';
 import {
   perfilDePontuacao,
   pontuar,
@@ -9,26 +13,42 @@ import {
 } from './questionario';
 import type { AplicarSuitabilityDto } from './dto/suitability.schemas';
 
+/** Validade da avaliação de perfil (prática de mercado: 24 meses). */
+export const VALIDADE_SUITABILITY_MESES = 24;
+
+export function calcularValidade(aplicadoEm: Date): Date {
+  const d = new Date(aplicadoEm);
+  d.setMonth(d.getMonth() + VALIDADE_SUITABILITY_MESES);
+  return d;
+}
+
 @Injectable()
 export class SuitabilityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
 
-  /** Devolve a estrutura do questionário pra renderizar no front */
+  /**
+   * Estrutura do questionário pro front. A pontuação de cada opção NÃO é
+   * enviada: exibir os pontos durante a aplicação induz a resposta "que dá o
+   * perfil desejado" e compromete a validade da suitability.
+   */
   getQuestionario() {
     return {
       versao: VERSAO,
-      perguntas: QUESTIONARIO,
+      perguntas: QUESTIONARIO.map((p) => ({
+        ...p,
+        opcoes: p.opcoes.map(({ id, label }) => ({ id, label })),
+      })),
     };
   }
 
-  async aplicar(dto: AplicarSuitabilityDto, autorId: string) {
-    const cliente = await this.prisma.cliente.findUnique({
-      where: { id: dto.clienteId },
-      select: { id: true, perfil: true },
+  async aplicar(user: AuthUser, dto: AplicarSuitabilityDto, ctx?: ContextoRequisicao) {
+    const cliente = await garantirClienteNoEscopo(this.prisma, user, dto.clienteId, {
+      id: true,
+      perfil: true,
     });
-    if (!cliente) {
-      throw new NotFoundException(`Cliente ${dto.clienteId} não encontrado`);
-    }
 
     let pontuacao: number;
     let detalhe: Record<string, unknown>;
@@ -37,35 +57,52 @@ export class SuitabilityService {
       pontuacao = r.pontuacao;
       detalhe = r.detalhe;
     } catch (e) {
-      throw new BadRequestException(
-        e instanceof Error ? e.message : 'Respostas inválidas',
-      );
+      throw new BadRequestException(e instanceof Error ? e.message : 'Respostas inválidas');
     }
 
     const perfilCalculado = perfilDePontuacao(pontuacao);
-    const validoAte = new Date(Date.now() + 730 * 86400000); // 24 meses
+    const aplicadoEm = new Date();
+    const validoAte = calcularValidade(aplicadoEm);
 
-    // Cria suitability + atualiza cliente.perfil em uma transação
-    const [suitability] = await this.prisma.$transaction([
-      this.prisma.suitability.create({
+    // Só as perguntas do questionário são persistidas (ignora chaves extras)
+    const respostasValidas = Object.fromEntries(
+      QUESTIONARIO.map((p) => [p.id, dto.respostas[p.id]]),
+    );
+
+    // Suitability + perfil do cliente + auditoria: tudo ou nada
+    const suitability = await this.prisma.$transaction(async (tx) => {
+      const s = await tx.suitability.create({
         data: {
           clienteId: dto.clienteId,
-          respostas: {
-            ...dto.respostas,
-            _detalhe: detalhe,
-          } as Prisma.InputJsonValue,
+          respostas: { ...respostasValidas, _detalhe: detalhe } as Prisma.InputJsonValue,
           pontuacao,
           perfilCalculado,
           versaoQuestionario: VERSAO,
+          aplicadoEm,
           validoAte,
-          aplicadoPorId: autorId,
+          aplicadoPorId: user.id,
         },
-      }),
-      this.prisma.cliente.update({
+      });
+      await tx.cliente.update({
         where: { id: dto.clienteId },
         data: { perfil: perfilCalculado },
-      }),
-    ]);
+      });
+      await this.auditoria.registrarEm(tx, {
+        acao: 'APLICACAO_SUITABILITY',
+        entidade: 'Suitability',
+        entidadeId: s.id,
+        userId: user.id,
+        diff: {
+          clienteId: dto.clienteId,
+          versaoQuestionario: VERSAO,
+          pontuacao,
+          perfilAnterior: cliente.perfil,
+          perfilNovo: perfilCalculado,
+        },
+        contexto: ctx,
+      });
+      return s;
+    });
 
     return {
       suitability,
@@ -75,18 +112,27 @@ export class SuitabilityService {
     };
   }
 
-  async historico(clienteId: string) {
+  async historico(user: AuthUser, clienteId: string) {
+    await garantirClienteNoEscopo(this.prisma, user, clienteId);
     return this.prisma.suitability.findMany({
       where: { clienteId },
       orderBy: { aplicadoEm: 'desc' },
+      include: { aplicadoPor: { select: { id: true, nome: true } } },
     });
   }
 
-  async listarRecentes(limit = 20) {
+  async listarRecentes(user: AuthUser, limit: number) {
     return this.prisma.suitability.findMany({
+      where: { cliente: escopoCliente(user) },
       take: limit,
       orderBy: { aplicadoEm: 'desc' },
-      include: {
+      select: {
+        id: true,
+        pontuacao: true,
+        perfilCalculado: true,
+        versaoQuestionario: true,
+        validoAte: true,
+        aplicadoEm: true,
         cliente: { select: { id: true, nome: true, email: true } },
       },
     });

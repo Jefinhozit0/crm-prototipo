@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { TerminusModule } from '@nestjs/terminus';
+import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
+import { AuditoriaModule } from './auditoria/auditoria.module';
 import { ClientesModule } from './clientes/clientes.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { InteracoesModule } from './interacoes/interacoes.module';
 import { LeadsModule } from './leads/leads.module';
 import { ProdutosModule } from './produtos/produtos.module';
 import { RecomendacoesModule } from './recomendacoes/recomendacoes.module';
@@ -18,11 +21,15 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env', '../../.env'],
+      // Falha o boot com mensagem clara se faltar/for fraca alguma variável
+      validate: validateEnv,
     }),
-    TerminusModule,
     PrismaModule,
+    AuditoriaModule,
     AuthModule,
     ClientesModule,
+    DashboardModule,
+    InteracoesModule,
     LeadsModule,
     ProdutosModule,
     RecomendacoesModule,

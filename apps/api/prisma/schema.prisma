@@ -41,9 +41,34 @@ model User {
   interacoes    Interacao[]
   recomendacoes Recomendacao[] @relation("RecomendacaoAprovador")
   auditoria     Auditoria[]
+  suitabilities Suitability[]  @relation("SuitabilityAplicador")
+  refreshTokens RefreshToken[]
 
-  @@index([email])
+  // email já é @unique (índice implícito) — o @@index([email]) antigo era redundante
   @@map("users")
+}
+
+// Refresh tokens emitidos (um registro por jti). Permite rotação a cada uso,
+// revogação no logout e detecção de reuso (token roubado reapresentado).
+// familiaId agrupa a cadeia de rotações de uma mesma sessão de login.
+model RefreshToken {
+  id         String    @id // jti do JWT
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familiaId  String
+  expiraEm   DateTime
+  revogadoEm DateTime?
+  // jti que substituiu este na rotação (null = ainda é o token vigente da família)
+  substituidoPor String?
+
+  ip        String?
+  userAgent String?
+  criadoEm  DateTime @default(now())
+
+  @@index([userId])
+  @@index([familiaId])
+  @@index([expiraEm])
+  @@map("refresh_tokens")
 }
 
 // ============================================================
@@ -110,7 +135,8 @@ model Posicao {
   atualizadoEm DateTime @updatedAt
 
   @@unique([clienteId, produtoId])
-  @@index([clienteId])
+  @@index([produtoId])
+  // (clienteId já é coberto pelo prefixo do @@unique acima)
   @@map("posicoes")
 }
 
@@ -221,7 +247,9 @@ model Produto {
 model Suitability {
   id        String  @id @default(cuid())
   clienteId String
-  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  // Restrict: histórico de suitability é registro regulatório (CVM 30) e não
+  // pode sumir junto com o cliente. Cliente é inativado, não apagado.
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
 
   // Respostas raw do questionário (JSON com chaves perguntaId → resposta)
   respostas Json
@@ -234,6 +262,7 @@ model Suitability {
   validoAte     DateTime // suitability tem validade (geralmente 24 meses)
   aplicadoEm    DateTime @default(now())
   aplicadoPorId String?
+  aplicadoPor   User?    @relation("SuitabilityAplicador", fields: [aplicadoPorId], references: [id], onDelete: SetNull)
 
   @@index([clienteId, aplicadoEm])
   @@map("suitability")
@@ -254,7 +283,9 @@ enum StatusRecomendacao {
 model Recomendacao {
   id        String  @id @default(cuid())
   clienteId String
-  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  // Restrict: trilha de recomendações aprovadas/recusadas é evidência de
+  // auditoria e não pode ser apagada em cascata.
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   produtoId String
   produto   Produto @relation(fields: [produtoId], references: [id])
 
@@ -274,6 +305,7 @@ model Recomendacao {
 
   @@index([clienteId, status])
   @@index([status, geradoEm])
+  @@index([produtoId])
   @@map("recomendacoes")
 }
 
@@ -325,6 +357,11 @@ enum AcaoAuditoria {
   APROVACAO_CARTEIRA
   EXPORTACAO_DADOS
   ACESSO_DADO_SENSIVEL
+  LOGOUT
+  LOGIN_FALHA
+  GERACAO_RECOMENDACAO
+  APLICACAO_SUITABILITY
+  REUSO_REFRESH_TOKEN
 }
 
 model Auditoria {
@@ -339,6 +376,8 @@ model Auditoria {
 
   ip        String?
   userAgent String?
+  // Correlação com os logs de acesso (header X-Request-Id)
+  requestId String?
 
   criadoEm DateTime @default(now())
 

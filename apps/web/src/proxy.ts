@@ -7,7 +7,7 @@ const SESSION_COOKIE = "crm_rt";
 const LOGIN_PATH = "/login";
 const DEFAULT_LOGGED_IN = "/dashboard";
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const hasSession = req.cookies.has(SESSION_COOKIE);
   const isLoginPage = pathname === LOGIN_PATH;

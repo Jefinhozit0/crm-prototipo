@@ -1,41 +1,55 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
+import { IdParamPipe } from '../common/pipes/id-param.pipe';
+import { contextoDaRequisicao } from '../common/request-context';
 import { CurrentUser, type AuthUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { SuitabilityService } from './suitability.service';
 import {
   aplicarSuitabilitySchema,
+  suitabilityRecentesQuerySchema,
   type AplicarSuitabilityDto,
+  type SuitabilityRecentesQueryDto,
 } from './dto/suitability.schemas';
 
 @Controller('suitability')
 export class SuitabilityController {
   constructor(private readonly service: SuitabilityService) {}
 
-  /** Retorna as 10 perguntas + opções pra renderizar o form */
+  /** Retorna as perguntas + opções pra renderizar o form (sem a pontuação) */
   @Get('questionario')
   questionario() {
     return this.service.getQuestionario();
   }
 
-  /** Lista as suitabilities mais recentes (todas as clientes) */
+  /** Suitabilities mais recentes dentro do escopo do usuário */
   @Get()
-  listarRecentes(@Query('limit') limit?: string) {
-    return this.service.listarRecentes(limit ? Number(limit) : 20);
+  listarRecentes(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(suitabilityRecentesQuerySchema)) query: SuitabilityRecentesQueryDto,
+  ) {
+    return this.service.listarRecentes(user, query.limit);
   }
 
   /** Histórico de suitabilities de um cliente específico */
   @Get('cliente/:clienteId')
-  historico(@Param('clienteId') clienteId: string) {
-    return this.service.historico(clienteId);
+  historico(
+    @CurrentUser() user: AuthUser,
+    @Param('clienteId', IdParamPipe) clienteId: string,
+  ) {
+    return this.service.historico(user, clienteId);
   }
 
   /** Aplica o suitability: calcula score, define perfil, atualiza cliente */
   @Post()
+  @Roles('ADMIN', 'ASSESSOR')
   @HttpCode(HttpStatus.CREATED)
   aplicar(
-    @Body(new ZodValidationPipe(aplicarSuitabilitySchema)) body: AplicarSuitabilityDto,
     @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(aplicarSuitabilitySchema)) body: AplicarSuitabilityDto,
+    @Req() req: Request,
   ) {
-    return this.service.aplicar(body, user.id);
+    return this.service.aplicar(user, body, contextoDaRequisicao(req));
   }
 }

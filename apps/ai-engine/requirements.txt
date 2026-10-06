@@ -1,10 +1,12 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-pydantic>=2.9.0
+# Faixas limitadas à major atual: uma major nova (ex.: pandas 3, sklearn 2)
+# pode mudar o formato do modelo serializado em models/*.pkl.
+fastapi>=0.115.0,<1
+uvicorn[standard]>=0.32.0,<1
+pydantic>=2.9.0,<3
 
 # Motor de ML (v2.0+) — ranker LightGBM treinado em CSV externo
-lightgbm>=4.6.0
-scikit-learn>=1.5.0
-pandas>=2.2.0
-joblib>=1.4.0
-numpy>=2.0.0
+lightgbm>=4.6.0,<5
+scikit-learn>=1.5.0,<2
+pandas>=2.2.0,<4
+joblib>=1.4.0,<2
+numpy>=2.0.0,<3

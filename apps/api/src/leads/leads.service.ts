@@ -1,9 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { EstagioPipeline, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditoriaService, diffCampos } from '../auditoria/auditoria.service';
 import { buildPage, skipTake } from '../common/pagination';
 import { sanitizeLead } from '../common/serializers';
+import type { ContextoRequisicao } from '../common/request-context';
+import type { AuthUser } from '../auth/decorators/current-user.decorator';
+import { escopoLead, resolverResponsavel } from '../auth/escopo';
 import type {
+  LeadBoardQueryDto,
   LeadCreateDto,
   LeadQueryDto,
   LeadUpdateDto,
@@ -14,14 +19,30 @@ const includeRel = {
   responsavel: { select: { id: true, nome: true, email: true } },
 } satisfies Prisma.LeadInclude;
 
+const ESTAGIOS: EstagioPipeline[] = [
+  'PROSPECCAO',
+  'QUALIFICACAO',
+  'PROPOSTA',
+  'NEGOCIACAO',
+  'FECHADO',
+  'PERDIDO',
+];
+
+// Teto de cards no Kanban — acima disso, usar a listagem paginada
+const LIMITE_BOARD = 500;
+
 @Injectable()
 export class LeadsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
 
-  async list(query: LeadQueryDto) {
+  async list(user: AuthUser, query: LeadQueryDto) {
     const where: Prisma.LeadWhereInput = {
+      ...escopoLead(user),
       ...(query.estagio && { estagio: query.estagio }),
-      ...(query.responsavelId && { responsavelId: query.responsavelId }),
+      ...(query.responsavelId && user.role !== 'ASSESSOR' && { responsavelId: query.responsavelId }),
       ...(query.origem && { origem: query.origem }),
       ...(query.q && {
         OR: [
@@ -35,7 +56,7 @@ export class LeadsService {
       this.prisma.lead.findMany({
         where,
         ...skipTake(query),
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         include: includeRel,
       }),
       this.prisma.lead.count({ where }),
@@ -44,34 +65,29 @@ export class LeadsService {
     return buildPage(data.map(sanitizeLead), total, query);
   }
 
-  /** Agrupa leads por estágio — ideal pra alimentar o Kanban do Pipeline */
-  async board(responsavelId?: string) {
-    const where: Prisma.LeadWhereInput = responsavelId ? { responsavelId } : {};
+  /** Agrupa leads por estágio — alimenta o Kanban do Pipeline */
+  async board(user: AuthUser, query: LeadBoardQueryDto) {
+    const where: Prisma.LeadWhereInput = {
+      ...escopoLead(user),
+      ...(query.responsavelId && user.role !== 'ASSESSOR' && { responsavelId: query.responsavelId }),
+    };
     const leads = await this.prisma.lead.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: includeRel,
+      take: LIMITE_BOARD,
     });
 
-    const estagios: EstagioPipeline[] = [
-      'PROSPECCAO',
-      'QUALIFICACAO',
-      'PROPOSTA',
-      'NEGOCIACAO',
-      'FECHADO',
-      'PERDIDO',
-    ];
-
-    return estagios.map((estagio) => {
+    return ESTAGIOS.map((estagio) => {
       const itens = leads.filter((l) => l.estagio === estagio).map(sanitizeLead);
       const total = itens.reduce((acc, l) => acc + l.valorEstimado, 0);
       return { estagio, total, count: itens.length, itens };
     });
   }
 
-  async findById(id: string) {
-    const lead = await this.prisma.lead.findUnique({
-      where: { id },
+  async findById(user: AuthUser, id: string) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, ...escopoLead(user) },
       include: {
         ...includeRel,
         estagioHistorico: {
@@ -80,53 +96,101 @@ export class LeadsService {
         },
       },
     });
-    if (!lead) throw new NotFoundException(`Lead ${id} não encontrado`);
+    if (!lead) throw new NotFoundException('Lead não encontrado');
     return sanitizeLead(lead);
   }
 
-  async create(dto: LeadCreateDto) {
-    const lead = await this.prisma.lead.create({
-      data: dto,
-      include: includeRel,
+  async create(user: AuthUser, dto: LeadCreateDto, ctx?: ContextoRequisicao) {
+    const { responsavelId, ...rest } = dto;
+    return this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.create({
+        data: { ...rest, responsavelId: resolverResponsavel(user, responsavelId) },
+        include: includeRel,
+      });
+      await tx.estagioHistorico.create({
+        data: { leadId: lead.id, estagio: lead.estagio, notas: 'Lead criado' },
+      });
+      await this.auditoria.registrarEm(tx, {
+        acao: 'CRIACAO',
+        entidade: 'Lead',
+        entidadeId: lead.id,
+        userId: user.id,
+        diff: { estagio: lead.estagio, origem: lead.origem },
+        contexto: ctx,
+      });
+      return sanitizeLead(lead);
     });
-    return sanitizeLead(lead);
   }
 
-  async update(id: string, dto: LeadUpdateDto) {
-    const lead = await this.prisma.lead.update({
-      where: { id },
-      data: dto,
-      include: includeRel,
+  async update(user: AuthUser, id: string, dto: LeadUpdateDto, ctx?: ContextoRequisicao) {
+    const antes = await this.garantirNoEscopo(user, id);
+    const data: Prisma.LeadUncheckedUpdateInput = { ...dto };
+    if (dto.responsavelId !== undefined) {
+      data.responsavelId = resolverResponsavel(user, dto.responsavelId);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.update({ where: { id }, data, include: includeRel });
+      const diff = diffCampos(antes, dto);
+      if (Object.keys(diff.depois).length > 0) {
+        await this.auditoria.registrarEm(tx, {
+          acao: 'ATUALIZACAO',
+          entidade: 'Lead',
+          entidadeId: id,
+          userId: user.id,
+          diff,
+          contexto: ctx,
+        });
+      }
+      return sanitizeLead(lead);
     });
-    return sanitizeLead(lead);
   }
 
   /** Move o lead pra outro estágio e registra no histórico atomicamente */
-  async moverEstagio(id: string, dto: MoverEstagioDto) {
-    const [lead] = await this.prisma.$transaction([
-      this.prisma.lead.update({
+  async moverEstagio(user: AuthUser, id: string, dto: MoverEstagioDto, ctx?: ContextoRequisicao) {
+    const antes = await this.garantirNoEscopo(user, id);
+    return this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.update({
         where: { id },
         data: {
           estagio: dto.estagio,
-          ...(dto.estagio === 'FECHADO' || dto.estagio === 'PERDIDO'
-            ? { fechadoEm: new Date() }
-            : {}),
+          fechadoEm: dto.estagio === 'FECHADO' || dto.estagio === 'PERDIDO' ? new Date() : null,
         },
         include: includeRel,
-      }),
-      this.prisma.estagioHistorico.create({
-        data: {
-          leadId: id,
-          estagio: dto.estagio,
-          notas: dto.notas,
-        },
-      }),
-    ]);
-    return sanitizeLead(lead);
+      });
+      await tx.estagioHistorico.create({
+        data: { leadId: id, estagio: dto.estagio, notas: dto.notas },
+      });
+      await this.auditoria.registrarEm(tx, {
+        acao: 'ATUALIZACAO',
+        entidade: 'Lead',
+        entidadeId: id,
+        userId: user.id,
+        diff: { antes: { estagio: antes.estagio }, depois: { estagio: dto.estagio } },
+        contexto: ctx,
+      });
+      return sanitizeLead(lead);
+    });
   }
 
-  async remove(id: string) {
-    await this.prisma.lead.delete({ where: { id } });
+  async remove(user: AuthUser, id: string, ctx?: ContextoRequisicao) {
+    const antes = await this.garantirNoEscopo(user, id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.lead.delete({ where: { id } });
+      await this.auditoria.registrarEm(tx, {
+        acao: 'EXCLUSAO',
+        entidade: 'Lead',
+        entidadeId: id,
+        userId: user.id,
+        diff: { nome: antes.nome, estagio: antes.estagio },
+        contexto: ctx,
+      });
+    });
     return { id, deleted: true };
+  }
+
+  private async garantirNoEscopo(user: AuthUser, id: string) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, ...escopoLead(user) } });
+    if (!lead) throw new NotFoundException('Lead não encontrado');
+    return lead;
   }
 }

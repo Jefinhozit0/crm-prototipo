@@ -1,0 +1,330 @@
+# Relatório de evolução — Capital Elite
+
+Data: 06/10/2026 · Branch: `evolucao-mvp-confiavel` (sem commits — alterações no working tree)
+
+## Resumo executivo
+
+O Capital Elite saiu de um protótipo que **não compilava** e tinha **falhas críticas de
+autorização e de domínio** para um **MVP técnico validado**: lint, typecheck e build
+passam; há 213 testes automatizados (API, web e motor); as migrations foram aplicadas em
+um PostgreSQL real e um fluxo ponta a ponta com os três serviços passou em 26 de 26 passos.
+
+Principais correções:
+
+- **Geração de recomendação quebrava** para qualquer cliente com suitability aplicada pela
+  tela: a API lia o ID da opção do questionário (`"t2"`) como número → `NaN` → o motor
+  rejeitava. Agora existe um mapeamento explícito e testado.
+- **Não havia autorização por escopo**: qualquer usuário logado (até "somente leitura")
+  podia ver, alterar e excluir clientes de qualquer assessor, mexer no catálogo e aprovar
+  recomendações. Agora há política por papel e por carteira, com testes.
+- **Sessão sem revogação**: logout não invalidava nada no servidor e o refresh token valia
+  7 dias. Agora há rotação a cada uso, revogação no logout e detecção de reuso.
+- **Auditoria inexistente** (a tabela existia, mas nada gravava). Agora login/logout,
+  acesso a dado sensível, CRUD, suitability, geração, aprovação e recusa são auditados,
+  com usuário, IP, user agent e `requestId`.
+- **Vulnerabilidade crítica do Next.js** e RCE no `@nestjs/common` corrigidas;
+  vulnerabilidades em produção caíram de 48 (2 críticas) para 8 (0 críticas).
+
+**Isto não está pronto para produção financeira.** Ver "Riscos para produção".
+
+## Diagnóstico inicial
+
+Comandos executados no estado original (`main` @ `e809aa8`):
+
+| Comando | Resultado |
+|---|---|
+| `git status` | limpo |
+| `npm ci` | ok; `postinstall` do Prisma **não rodou** (npm 11 bloqueia install scripts) |
+| `npm audit` | 48 vulnerabilidades (2 críticas, 28 altas, 13 moderadas, 5 baixas) |
+| `npm outdated` | Next 16.2.6 (16.3.8 disponível), Nest 10 (12 disponível), Prisma 5 (7 disponível) etc. |
+| `npm run lint` | **falhou** — 2 erros (`setState` em `useEffect`), 1 aviso |
+| `npm run build` | **falhou** — API (Prisma Client não gerado) e web (`useSearchParams` sem `Suspense` em `/login`) |
+| `python -m compileall` | ok |
+| `pytest -q` | nenhum teste existia |
+
+Python não estava instalado na máquina; usei um Python 3.12 isolado (via `uv`, no diretório
+temporário da sessão) sem alterar o sistema. Docker/Postgres também não existiam; para
+validar migrations usei um PostgreSQL portátil (`embedded-postgres`) descartável.
+
+### Problemas encontrados (classificados)
+
+Esforço: P (< 1 dia), M (1–3 dias), G (> 3 dias). "Status" indica o que foi feito nesta rodada.
+
+| # | Sev. | Onde | Problema / impacto | Causa | Correção | Esf. | Status |
+|---|---|---|---|---|---|---|---|
+| 1 | Crítico | `recomendacoes.service.ts` (buildAiEngineRequest) | Gerar recomendação falha (503) para todo cliente com suitability aplicada pela UI | Leitura de `respostas.tolerancia_perda` como número; o form grava ID de opção | `suitability/parametros.ts` com mapeamento explícito + suporte ao formato legado | P | ✅ |
+| 2 | Crítico | todos os controllers | Sem escopo por assessor; READONLY podia excluir clientes e aprovar recomendações | Só `/health` tinha `@Roles` | `auth/escopo.ts`, `@Roles` explícito, default seguro no `RolesGuard` | M | ✅ |
+| 3 | Crítico | `next@16.2.6` | Bypass de middleware/proxy e outras | Versão vulnerável | `next@16.3.8` (minor) | P | ✅ |
+| 4 | Crítico | `@nestjs/common@10.4.15` | Execução remota de código via `Content-Type` (GHSA, < 10.4.16) | Versão vulnerável no lock | `^10.4.22` (patch) | P | ✅ |
+| 5 | Crítico | build | Projeto não compilava | Prisma generate fora do build; `Suspense` ausente | `build: prisma generate && nest build`; `Suspense` no login | P | ✅ |
+| 6 | Alto | `auth.service.ts` | Refresh token sem rotação/revogação; logout só limpa cookie | JWT stateless | Tabela `refresh_tokens`, rotação, revogação por família, detecção de reuso | M | ✅ |
+| 7 | Alto | `auth` | Sem limite de tentativas de login (força bruta) | — | Limite por e-mail (5) e IP (20) / 15 min, 429 | P | ✅ (em memória) |
+| 8 | Alto | `main.ts` / `.env` | API subia com `JWT_SECRET` vazio ou `dev-change-me` | Sem validação de env | `config/env.ts`: boot falha em produção sem segredos fortes | P | ✅ |
+| 9 | Alto | `all-exceptions.filter.ts` | `message` de qualquer erro (e stack fora de prod) ia ao cliente; erro Prisma exposto | Filtro de debug | Filtro único, 500 genérico + `requestId`, 503 para banco fora | P | ✅ |
+| 10 | Alto | `login/page.tsx` | Open redirect via `?from=https://...` | `router.replace(from)` sem validação | `safeRedirectPath` | P | ✅ |
+| 11 | Alto | `ai-engine/main.py` | Motor sem autenticação e com CORS `*`, recebendo nome/patrimônio | — | Token de serviço (`AI_ENGINE_TOKEN`), CORS removido | P | ✅ |
+| 12 | Alto | `ai-engine.service.ts` | Chamada ao motor sem timeout; resposta gravada sem validação; log com corpo de erro (dados do cliente) | — | Timeout, schema zod, log só do status | P | ✅ |
+| 13 | Alto | `recomendacoes.service.ts` | Aprovar/recusar sem checar estado (reaprovar recusada/expirada); gerar não-transacional | — | Transição condicional, transação serializável, revalidação na aprovação | M | ✅ |
+| 14 | Alto | schema | Excluir cliente apagava em cascata suitability e recomendações (registro regulatório) | `onDelete: Cascade` | `Restrict` + exclusão lógica (INATIVO) | P | ✅ |
+| 15 | Alto | `clientes.service.ts` | Hash de CPF = SHA-256 puro (revertível por força bruta: ~10⁹ CPFs); sem dígito verificador | — | HMAC com `CPF_HASH_SECRET` + validação de DV | P | ✅ (legado ver pendências) |
+| 16 | Alto | sem auditoria | Tabela `auditoria` nunca era escrita | — | `AuditoriaService` + endpoint de consulta | M | ✅ |
+| 17 | Alto | `prisma/seed.ts` | Seed apaga todas as tabelas sem trava | — | Bloqueado em `NODE_ENV=production` | P | ✅ |
+| 18 | Médio | `suitability` | Pontos de cada opção exibidos durante a aplicação (indução de resposta) | — | Pontuação só no servidor | P | ✅ |
+| 19 | Médio | `ai-engine/rules.py` | Título público federal tratado como concentração por emissor | Regra genérica | Tesouro Nacional isento (como na regulação de fundos) | P | ✅ |
+| 20 | Médio | API | Recomendação sem suitability válida era gerada com perfil/horizonte "chutados" | Fallback silencioso | 422 sem suitability ou vencida | P | ✅ |
+| 21 | Médio | `cliente.schemas.ts` | Perfil do cliente alterável por PATCH, sem suitability | — | Perfil só muda via suitability | P | ✅ |
+| 22 | Médio | `lead.schemas.ts` | Estágio alterável por PATCH, sem histórico | — | Só via `mover-estagio` | P | ✅ |
+| 23 | Médio | rotas | `:id`, `limit` e `responsavelId` sem validação | — | `IdParamPipe`, zod nas queries | P | ✅ |
+| 24 | Médio | web | Dashboard e histórico 100% mock; deltas % inventados; "agenda" fictícia | — | Endpoints reais `/dashboard/resumo` e `/interacoes`; selo "Dados demonstrativos" no que não tem fonte | M | ✅ |
+| 25 | Médio | web | Botões sem ação (Filtros, Novo lead, Buscar, Ver detalhes, Nova carteira, sino com ponto vermelho, "Conectado" fixo), tela "Carteira ativada" falsa | — | Ação real ou selo "em breve"/"funcionalidade futura" | P | ✅ |
+| 26 | Médio | web | Sem navegação no celular (sidebar oculta e sem menu) | — | Menu lateral mobile | P | ✅ |
+| 27 | Médio | web | Select mostrava o ID do cliente após a escolha | Base UI exige `items` | `items` nos selects | P | ✅ |
+| 28 | Médio | `ai-engine` | Score de ML sem limite [0,1]; origem do score não chegava à auditoria; yield comparado com produtos inativos | — | `clamp`, `scoreFonte`/`scoreRegras`, só ativos | P | ✅ |
+| 29 | Médio | `apps/api/src/recomendacoes/ia/` | Motor TS morto e divergente do Python | Migração incompleta | Removido (justificativa abaixo) | P | ✅ |
+| 30 | Médio | CSRF | Só SameSite=Lax | — | Checagem de `Origin` em métodos de escrita | P | ✅ |
+| 31 | Médio | deps Nest 10 | 8 vulnerabilidades de produção (multer, body-parser, lodash, @nestjs/core) | Correção só em Nest 11+ | Migração separada | G | ⏳ |
+| 32 | Baixo | web | Busca dispara request a cada tecla; lista "pisca" | — | Debounce + `keepPreviousData` | P | ✅ |
+| 33 | Baixo | web | Barra de alocação com `Infinity%` quando patrimônio = 0 | — | Base protegida | P | ✅ |
+| 34 | Baixo | motor | Textos "1 anos", markdown `**` dentro da frase, "você já tem" | — | Corrigidos | P | ✅ |
+| 35 | Baixo | logout web | Falha na API de logout virava rejeição não tratada | `try/finally` sem `catch` | Corrigido (achado pelo teste) | P | ✅ |
+| 36 | Baixo | Python | `requirements.txt` sem teto de versão (pandas 3 já instalava) | — | Faixas até a próxima major | P | ✅ |
+| 37 | Melhoria | `Lead.clienteId` | Sem FK para `clientes`; coluna `clienteIdUnique` sem uso | — | FK com limpeza de órfãos (exige revisão dos dados reais) | P | ⏳ |
+| 38 | Melhoria | domínio | FGC (R$ 250 mil por CPF/instituição) não é considerado | — | Regra de limite FGC para CDB/LCI/LCA | M | ⏳ |
+
+## Alterações realizadas
+
+Trabalho em grupos, com `lint` + `typecheck` + `build` (e testes, quando existiam) depois de cada um.
+
+### Arquivos alterados
+
+**Raiz**: `README.md`, `.env.example`, `package.json`, `package-lock.json`, `.claude/agents/ai-engine.md`
+**Novo**: `docs/relatorio-evolucao.md`
+
+**API (`apps/api`)**
+- Alterados: `package.json`, `tsconfig.json`, `tsconfig.build.json`, `prisma/schema.prisma`, `prisma/seed.ts`,
+  `src/app.module.ts`, `src/main.ts`, `src/prisma/prisma.service.ts`, `src/health/health.controller.ts`,
+  `src/auth/{auth.controller,auth.module,auth.service}.ts`, `src/auth/dto/auth.schemas.ts`,
+  `src/auth/guards/{jwt-auth,roles}.guard.ts`, `src/common/filters/all-exceptions.filter.ts`,
+  `src/common/pipes/zod-validation.pipe.ts`, `src/clientes/*`, `src/leads/*`, `src/produtos/*`,
+  `src/suitability/{suitability.controller,suitability.service}.ts`, `src/suitability/dto/suitability.schemas.ts`,
+  `src/recomendacoes/{ai-engine.service,recomendacoes.controller,recomendacoes.module,recomendacoes.service}.ts`,
+  `src/recomendacoes/dto/recomendacao.schemas.ts`
+- Novos: `prisma/migrations/20261006120000_auth_auditoria_integridade/`, `src/config/env.ts`,
+  `src/auditoria/*`, `src/auth/escopo.ts`, `src/auth/login-throttle.service.ts`, `src/clientes/cpf.ts`,
+  `src/common/request-context.ts`, `src/common/origin-check.middleware.ts`, `src/common/pipes/id-param.pipe.ts`,
+  `src/dashboard/dashboard.module.ts`, `src/interacoes/interacoes.module.ts`, `src/recomendacoes/regras.ts`,
+  `src/suitability/parametros.ts`, testes (`src/**/*.spec.ts`, `test/`)
+- Removidos: `src/common/filters/prisma-exception.filter.ts` (incorporado ao filtro único),
+  `src/recomendacoes/ia/{justificativa,rule-engine,types}.ts` (motor TS morto — ver abaixo)
+
+**Web (`apps/web`)**
+- Alterados: `package.json`, `src/app/globals.css`, `src/app/login/page.tsx`, `src/app/(app)/layout.tsx`,
+  páginas `dashboard` (+ `_components/dashboard-charts.tsx`), `historico`, `leads`, `pipeline`, `produtos`,
+  `recomendacao`, `suitability`, `clientes/[id]`, `clientes/[id]/suitability`, `confirmacao-ativacao`;
+  componentes `app-header`, `app-sidebar`, `kpi-card`, `query-states`, `recomendacao-card`,
+  `route-placeholder`, `thinking-dialog`; `src/lib/{api,format,queries}.ts`, `src/types/api.ts`
+- Renomeado: `src/middleware.ts` → `src/proxy.ts` (convenção do Next 16)
+- Novos: `src/components/{demo,nav-links}.tsx`, `src/lib/{dados-demonstrativos,labels,permissoes,safe-redirect,use-debounced-value}.ts`,
+  `src/styles/shadcn-tailwind.css`, `vitest.config.mts`, `src/test/*`, testes `*.test.ts(x)`
+- Removidos: `src/lib/mock-data.ts`, `src/types/domain.ts` (mocks substituídos por dados reais)
+
+**Motor (`apps/ai-engine`)**
+- Alterados: `README.md`, `pyproject.toml`, `requirements.txt`, `src/{main,models,rules,justificativa}.py`
+- Novos: `requirements-dev.txt`, `tests/{conftest,test_rules,test_api}.py`
+
+### Remoções e por quê
+
+- **Motor TypeScript (`apps/api/src/recomendacoes/ia/`)**: nenhum arquivo o importava (código
+  morto). Já divergia do Python (sem tributação, sem filtro de risco, sem concentração por
+  emissor, alocação-alvo diferente para perfil agressivo). Mantê-lo sugeria uma paridade
+  inexistente. O Python é a única implementação.
+- **Mocks do front**: substituídos por endpoints reais. As duas séries sem fonte no banco
+  (evolução de AUM, captação) foram mantidas, isoladas em `dados-demonstrativos.ts` e com
+  selo visível.
+- **Variação % nos KPIs**: removida — o sistema não guarda histórico, então qualquer delta era inventado.
+- **`DELETE` físico de cliente e produto**: virou exclusão lógica (registros vinculados e regulatórios).
+
+## Segurança e dependências
+
+| Dependência | Antes | Depois | Tipo | Motivo |
+|---|---|---|---|---|
+| next / eslint-config-next | 16.2.6 | 16.3.8 | minor | vulnerabilidade crítica |
+| @nestjs/common | 10.4.15 | 10.4.22 | patch | RCE via Content-Type |
+| qs (override) | 6.14.2 | 6.16.0 | minor | DoS; fixado pelo express 4 em `~6.14` |
+| transitivas (`npm audit fix` sem `--force`) | — | — | patch/minor | proxy-addr (crítica), js-yaml, hono, ip-address, brace-expansion etc. |
+| shadcn (CLI) | 4.8.0 | **removido** | — | só fornecia um CSS de 95 linhas (MIT, vendorizado em `src/styles/`); arrastava ts-morph, MCP/hono, msw |
+| @nestjs/terminus | 10.3.0 | **removido** | — | substituído por health check próprio (inclui o motor) |
+| @types/node (web) | 20 | 22 | dev | exigido pelo Vitest 5; alinhado com a API |
+| Novas (dev) | — | jest 30, ts-jest, @nestjs/testing, supertest, vitest 5, jsdom, Testing Library | dev | testes |
+| Python | `>=` sem teto | faixas até a próxima major | — | proteger o modelo serializado |
+
+**Vulnerabilidades restantes**: 48 no total, **8 em dependências de produção (3 altas, 4
+moderadas, 1 baixa), 0 críticas**. As 8 são do ecossistema NestJS 10 e só se resolvem com Nest 11+:
+
+| Pacote | Exposição real hoje | Mitigação aplicada |
+|---|---|---|
+| multer, file-type | só com `FileInterceptor`/`ParseFilePipe` — **não usados** | nenhum endpoint de upload |
+| body-parser (limite inválido) | limite explícito e válido | `json` 100 kb, `urlencoded` 20 kb |
+| lodash (via @nestjs/config) | `_.template` com entrada do usuário — não ocorre | — |
+| @nestjs/core (GHSA-36xv-jgw5-4q75) | avaliar na migração | migração Nest 11 |
+
+As outras 40 são de ferramentas de dev/teste (Nest CLI, Jest, eslint-config-next) e não vão
+para o runtime. `npm audit fix --force` **não** foi usado. Ele propunha, entre outras coisas,
+*rebaixar* `eslint-config-next` para 14.x e subir o Nest em 2 majors.
+
+**Outras medidas**: Helmet mantido; CORS restrito a `WEB_ORIGIN`; checagem de `Origin`
+(CSRF); limites de payload; IDs de rota validados; erros sem stack e sem mensagens internas;
+logs de acesso em JSON **sem** query string, corpo, cookies ou tokens; Prisma sem log de
+queries; o motor não loga corpo.
+
+## Autenticação e autorização
+
+- Access token 15 min, refresh 7 dias, ambos em cookie `httpOnly`, `SameSite=Lax`, `Path=/`,
+  `Secure` em produção (ou com `COOKIE_SECURE=true`). `path=/` foi mantido de propósito: o
+  proxy do Next precisa ver o `crm_rt` nas rotas de página.
+- Refresh: cada token vale uma vez (rotação). Reapresentar um token já rotacionado revoga
+  a sessão inteira e gera `REUSO_REFRESH_TOKEN` na auditoria. Duas abas renovando ao mesmo
+  tempo (janela de 30 s) não derrubam a sessão; o front repete a requisição.
+- Logout revoga a sessão no servidor.
+- `HS256` fixado na assinatura e na verificação; tempo de resposta de login igual para
+  e-mail existente ou não.
+- Autorização: tabela de papéis no README. Testada por endpoint e por escopo.
+- **Limitações conhecidas**: o access token continua válido por até 15 min após desativar o
+  usuário ou trocar o papel. O rate limit é em memória (vale por instância). Não há MFA
+  (os campos existem no schema) nem recuperação de senha.
+
+## API e banco
+
+**Migration criada**: `20261006120000_auth_auditoria_integridade` (gerada por
+`prisma migrate diff`, sem acesso a banco):
+- tabela `refresh_tokens`; coluna `auditoria.requestId`; 5 novos valores em `AcaoAuditoria`;
+- `suitability` e `recomendacoes` → `clientes` passam de `CASCADE` para `RESTRICT`;
+- FK `suitability.aplicadoPorId` → `users` (`SET NULL`). Antes da FK, a migration anula
+  `aplicadoPorId` que aponte para usuário inexistente — **é a única escrita em dados**, e
+  só toca referências que já estavam quebradas;
+- índices: `posicoes(produtoId)`, `recomendacoes(produtoId)`; removidos `users_email_idx`
+  (duplicava o índice único) e `posicoes_clienteId_idx` (coberto pelo índice único composto);
+- CHECKs `NOT VALID` (valem para escritas novas; não travam dados legados): risco 1–5,
+  taxas ≥ 0, patrimônio ≥ 0, valor de posição ≥ 0, valor de lead ≥ 0, score 0–1,
+  pontuação 0–100. Depois de auditar a base: `ALTER TABLE … VALIDATE CONSTRAINT …`.
+
+**Validada em PostgreSQL real**: as 4 migrations aplicam com `migrate deploy`;
+`migrate diff` banco × schema = vazio (sem drift); CHECKs e RESTRICT bloqueiam dados inválidos.
+
+**Valores monetários**: todos em `Decimal` (18,2) no banco; nenhum `float` persistido. Na
+API e no motor viram `number` em JSON (seguro até ~R$ 9 quatrilhões; em produção,
+considerar string decimal no contrato).
+
+**Endpoints novos**: `GET /dashboard/resumo`, `GET /interacoes`, `GET /auditoria`, `GET /health/ready`.
+
+**Mudanças de contrato** (o front já foi ajustado):
+- `DELETE /clientes/:id` → `{ id, inativado }`;
+- `DELETE /produtos/:id` → `{ id, desativado }`;
+- `POST /recomendacoes/generate` passa a devolver também `totalAnalisados`, `descartados`
+  e `engineVersion`, e responde 422 sem suitability válida;
+- `GET /suitability/questionario` não traz mais `pontos`;
+- `GET /clientes/:id/detalhado` não traz mais as respostas brutas da suitability;
+- `PATCH /clientes` não aceita `perfil`; `PATCH /leads` não aceita `estagio`.
+
+## Motor de recomendação
+
+- Regras revisadas e documentadas no `apps/ai-engine/README.md`. Mudanças: Tesouro Nacional
+  isento do limite por emissor; rendimento relativo só contra produtos ativos; score do ML
+  limitado a [0,1] e com fallback se vier NaN; `scoreFonte`/`scoreRegras` gravados para
+  auditoria; textos corrigidos.
+- Mapeamento questionário → parâmetros (conservador, documentado em `parametros.ts`):
+  horizonte h1/h2/h3/h4 → 1/2/5/10 anos; tolerância t1/t2/t3/t4 → 5/10/25/40%.
+  "Não aceito perdas" vira 5% (libera só risco 1) e não 0%, porque com 0% nenhum produto
+  passaria no filtro.
+- Na aprovação, a API **revalida**: produto ativo, suitability vigente e igual à usada na
+  geração, e perfil compatível.
+- Todo texto ao usuário apresenta a recomendação como **apoio à decisão**; a aprovação pede
+  confirmação explícita, que avisa que nenhuma ordem é enviada.
+- O modelo LightGBM (`models/ranker-v1.pkl`) **não carregou neste ambiente** (falta uma DLL
+  de runtime do Windows para o `lightgbm`). O motor caiu corretamente para as regras, o que
+  está coberto por teste. O modelo foi treinado com **dados sintéticos** (`src/ml/synth.py`)
+  e não deve ordenar recomendações reais antes de ser treinado e validado com decisões reais.
+
+## Frontend e experiência
+
+- Sem mocks onde há endpoint. O que é ilustrativo leva selo **"Dados demonstrativos"**, e o
+  que não existe leva **"em breve"** / **"Funcionalidade futura"**.
+- Ações escondidas conforme o papel (espelho da API, que continua decidindo).
+- Acessibilidade: link "pular para o conteúdo", `aria-current` na navegação, `aria-expanded`
+  nos painéis, `radiogroup` no questionário, `role="alert"` em erros, rótulos em campos e
+  botões de ícone, cores de badge com mais contraste.
+- Responsividade: menu mobile; colunas secundárias escondidas em telas pequenas.
+- Estados de loading/erro (com "tentar novamente")/vazio em todas as telas de dados;
+  paginação em clientes e histórico.
+- Datas no fuso de São Paulo; rótulos de perfil, status e categoria centralizados.
+
+## Testes e validações
+
+| Suite | Ferramenta | Testes | Cobre |
+|---|---|---|---|
+| API unitários | Jest | 86 | suitability → parâmetros, pontuação e faixas, CPF/HMAC, validação de env, filtro de erros (sem vazamento), throttle, `RolesGuard`, escopo, cliente HTTP do motor (timeout, 502, contrato), auditoria |
+| API HTTP | Jest + Supertest (Nest real, banco em memória) | 45 | login válido/inválido/inativo/429, refresh e rotação, reuso, corrida entre abas, logout, 401 sem token, CSRF, escopo por assessor (404), READONLY sem escrita, auditoria por papel, CRUD de cliente com auditoria, filtros/paginação, suitability, geração (422, regressão do bug crítico, expiração, catálogo vazio, produto fora do catálogo), aprovação/recusa (409, revalidações, expiração), leads |
+| Web | Vitest + Testing Library | 38 | refresh automático e redirecionamento, open redirect, login, logout (inclusive com falha da API), confirmação de aprovação, recusa com motivo, papel READONLY, geração única por abertura, erros de geração, navegação, loading/erro/vazio, dashboard sem mock |
+| Motor | pytest | 44 | modelos Pydantic, perfil incompatível, risco > tolerância, concentração (e isenção soberana), sobrealocação, 5 fatores, score, topN, catálogo vazio, patrimônio zero, justificativa pt-BR, token, CORS, fallback ML |
+| Ponta a ponta | script com Postgres + motor + API reais | 26 passos | fluxo completo do assessor, escopo entre assessores, auditoria com `requestId`, health, sessão |
+
+Resultado final: `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build` ✅ · `npm test` ✅ (131 + 38) · `pytest -q` ✅ (44)
+
+**Não testado**: o front rodando contra a API real no navegador (`next start` + proxy); a
+UI foi validada por testes de componente e por build. Também não houve teste de carga.
+
+## Pendências
+
+| Pendência | Motivo de não ter sido feita | Esforço |
+|---|---|---|
+| Migrar NestJS 10 → 11 (fecha as 8 vulnerabilidades de produção) | Major version; exige revisão de breaking changes (Express 5, rotas) | M |
+| Rate limit e revogação em store compartilhado (Redis) | Infra; hoje vale por instância | P |
+| Re-hash de CPFs legados (SHA-256 puro) | Precisa do CPF em claro, que o sistema não guarda; requer recadastro ou importação da fonte | M |
+| FK `leads.clienteId` e conversão lead → cliente | Exige olhar os dados reais antes de limpar órfãos | P |
+| Criação de cliente/lead/produto pela UI | Fora do escopo desta rodada (endpoints existem) | M |
+| Histórico de AUM e movimentações | Sem modelo de dados (gráficos marcados como demonstrativos) | M |
+| Limite FGC, custos de corretagem/come-cotas, CI/CD | Melhorias de domínio e de processo | M |
+| Teste E2E de navegador (Playwright) | Não fazia parte desta rodada | P |
+| Prisma 5 → 6/7, TypeScript 7, ESLint 10 | Majors; sem necessidade imediata | M |
+
+## Riscos para produção
+
+1. **Regulatório (CVM 30 / ANBIMA)**: questionário, faixas de perfil, mapeamento de
+   tolerância e regras do motor foram calibrados por engenharia, **não validados por
+   compliance**. Precisam de aprovação formal e versionamento controlado.
+2. **LGPD**: falta base legal documentada, política de retenção, atendimento a direitos do
+   titular (acesso, correção, eliminação × retenção regulatória), registro de operações e
+   avaliação de impacto (RIPD). Os CPFs legados estão em hash fraco.
+3. **Modelo de ML**: treinado em dados sintéticos. Usar só depois de treinar com decisões
+   reais, validar e monitorar viés; até lá, rodar só com regras.
+4. **Segurança**: sem MFA, sem recuperação de senha, sem pentest, rate limit em memória,
+   Nest 10 com vulnerabilidades conhecidas (mitigadas, não corrigidas).
+5. **Operação**: sem CI/CD, sem backups e restore testados, sem métricas/alertas/tracing
+   (só logs estruturados e health checks), sem ambiente de homologação.
+6. **Integrações**: não há integração com custódia, plataforma de ordens nem cadastro
+   oficial; carteira e catálogo são dados de demonstração.
+
+## Próximos passos
+
+1. Revisão de compliance das regras de suitability e do motor (bloqueante).
+2. CI (lint, typecheck, build, testes, `npm audit --omit=dev`, pytest) + ambiente de homologação.
+3. Migração NestJS 11 e store compartilhado (Redis) para rate limit.
+4. Pacote LGPD: retenção, direitos do titular, re-hash de CPFs, RIPD.
+5. Observabilidade: métricas, alertas, tracing com o `requestId` já propagado; backups testados.
+6. MFA para todos os perfis e recuperação de senha.
+7. Telas de cadastro (cliente, lead, produto) e histórico de carteira (AUM/captação reais).
+8. Teste E2E de navegador e pentest externo antes do go-live.
+
+### Estimativa de esforço para produção
+
+Para 1–2 pessoas experientes. Não inclui o tempo de compliance, jurídico e integrações
+com sistemas da instituição, que costuma dominar o prazo.
+
+| Frente | Estimativa |
+|---|---|
+| Segurança (Nest 11, MFA, senha, Redis, pentest e correções) | 3–4 semanas |
+| Infra e operação (CI/CD, homologação, backups, observabilidade) | 2–3 semanas |
+| LGPD e retenção (técnico) | 1–2 semanas |
+| Funcionalidades mínimas de operação (cadastros, histórico de carteira) | 3–4 semanas |
+| Ajustes do motor após revisão de compliance + E2E de navegador | 2 semanas |
+| **Total técnico** | **~11–15 semanas**, mais as integrações e validações externas |
