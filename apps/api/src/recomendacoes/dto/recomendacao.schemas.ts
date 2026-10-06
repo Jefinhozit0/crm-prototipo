@@ -13,7 +13,7 @@ export const recomendacaoQuerySchema = paginationSchema.extend({
 });
 
 export const recusarSchema = z.object({
-  motivo: z.string().min(3).max(500),
+  motivo: z.string().trim().min(3, 'Descreva o motivo (mínimo 3 caracteres)').max(500),
 });
 
 export type GenerateDto = z.infer<typeof generateSchema>;

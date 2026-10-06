@@ -8,9 +8,14 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
+import { IdParamPipe } from '../common/pipes/id-param.pipe';
+import { contextoDaRequisicao } from '../common/request-context';
 import { CurrentUser, type AuthUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { RecomendacoesService } from './recomendacoes.service';
 import {
   generateSchema,
@@ -27,33 +32,46 @@ export class RecomendacoesController {
 
   @Get()
   list(
+    @CurrentUser() user: AuthUser,
     @Query(new ZodValidationPipe(recomendacaoQuerySchema)) query: RecomendacaoQueryDto,
   ) {
-    return this.service.list(query);
+    return this.service.list(user, query);
   }
 
   @Get(':id')
-  findById(@Param('id') id: string) {
-    return this.service.findById(id);
+  findById(@CurrentUser() user: AuthUser, @Param('id', IdParamPipe) id: string) {
+    return this.service.findById(user, id);
   }
 
   @Post('generate')
+  @Roles('ADMIN', 'ASSESSOR')
   @HttpCode(HttpStatus.OK)
-  generate(@Body(new ZodValidationPipe(generateSchema)) body: GenerateDto) {
-    return this.service.generate(body);
+  generate(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(generateSchema)) body: GenerateDto,
+    @Req() req: Request,
+  ) {
+    return this.service.generate(user, body, contextoDaRequisicao(req));
   }
 
   @Patch(':id/aprovar')
-  aprovar(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.service.aprovar(id, user.id);
+  @Roles('ADMIN', 'ASSESSOR')
+  aprovar(
+    @CurrentUser() user: AuthUser,
+    @Param('id', IdParamPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.service.aprovar(user, id, contextoDaRequisicao(req));
   }
 
   @Patch(':id/recusar')
+  @Roles('ADMIN', 'ASSESSOR')
   recusar(
-    @Param('id') id: string,
     @CurrentUser() user: AuthUser,
+    @Param('id', IdParamPipe) id: string,
     @Body(new ZodValidationPipe(recusarSchema)) body: RecusarDto,
+    @Req() req: Request,
   ) {
-    return this.service.recusar(id, user.id, body);
+    return this.service.recusar(user, id, body, contextoDaRequisicao(req));
   }
 }

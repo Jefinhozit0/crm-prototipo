@@ -1,23 +1,38 @@
 import { z } from 'zod';
-import { CategoriaProduto, PerfilInvestidor } from '@prisma/client';
+import { CategoriaProduto, PerfilInvestidor, Tributacao } from '@prisma/client';
 import { paginationSchema } from '../../common/pagination';
 
+// Liquidez no formato que o motor entende: "D+0", "D+30", "No vencimento"...
+const liquidezSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(30)
+  .refine(
+    (v) => /^d\+\d{1,4}$/i.test(v) || /vencimento/i.test(v),
+    'Liquidez deve ser "D+N" (ex.: D+30) ou conter "vencimento"',
+  );
+
 export const produtoCreateSchema = z.object({
-  nome: z.string().min(2).max(120),
-  emissor: z.string().min(2).max(120),
+  nome: z.string().trim().min(2).max(120),
+  emissor: z.string().trim().min(2).max(120),
   categoria: z.nativeEnum(CategoriaProduto),
-  rentabilidadeAno: z.number().min(-100).max(1000),
+  rentabilidadeAno: z.number().finite().min(-100).max(1000),
   risco: z.number().int().min(1).max(5),
+  tributacao: z.nativeEnum(Tributacao).optional().default('TRIBUTADO'),
   perfilMinimo: z.nativeEnum(PerfilInvestidor),
-  liquidez: z.string().min(1).max(30),
-  taxaAdmin: z.number().min(0).max(100).optional(),
-  taxaPerformance: z.number().min(0).max(100).optional(),
-  ticker: z.string().min(2).max(30).optional(),
+  liquidez: liquidezSchema,
+  taxaAdmin: z.number().finite().min(0).max(100).nullable().optional(),
+  taxaPerformance: z.number().finite().min(0).max(100).nullable().optional(),
+  ticker: z.string().trim().min(2).max(30).optional(),
   ativo: z.boolean().optional().default(true),
   descricao: z.string().max(2000).optional(),
 });
 
-export const produtoUpdateSchema = produtoCreateSchema.partial();
+export const produtoUpdateSchema = produtoCreateSchema
+  .partial()
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, 'Informe ao menos um campo para atualizar');
 
 export const produtoQuerySchema = paginationSchema.extend({
   categoria: z.nativeEnum(CategoriaProduto).optional(),
@@ -27,7 +42,7 @@ export const produtoQuerySchema = paginationSchema.extend({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
   riscoMax: z.coerce.number().int().min(1).max(5).optional(),
-  q: z.string().min(1).max(80).optional(), // busca por nome/emissor/ticker
+  q: z.string().trim().min(1).max(80).optional(), // busca por nome/emissor/ticker
 });
 
 export type ProdutoCreateDto = z.infer<typeof produtoCreateSchema>;

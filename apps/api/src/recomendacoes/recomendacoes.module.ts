@@ -6,5 +6,6 @@ import { RecomendacoesService } from './recomendacoes.service';
 @Module({
   controllers: [RecomendacoesController],
   providers: [RecomendacoesService, AiEngineService],
+  exports: [AiEngineService],
 })
 export class RecomendacoesModule {}

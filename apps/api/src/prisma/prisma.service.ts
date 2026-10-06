@@ -6,18 +6,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
-    super({
-      log: [
-        { emit: 'event', level: 'query' },
-        { emit: 'stdout', level: 'warn' },
-        { emit: 'stdout', level: 'error' },
-      ],
-    });
+    // Sem log de queries: parâmetros podem conter dados pessoais/financeiros
+    super({ log: [{ emit: 'stdout', level: 'warn' }, { emit: 'stdout', level: 'error' }] });
   }
 
   async onModuleInit() {
-    await this.$connect();
-    this.logger.log('Prisma conectado ao banco');
+    // Banco fora do ar no boot não derruba a API: o Prisma reconecta sob demanda,
+    // as rotas respondem 503 e /api/health/ready sinaliza indisponibilidade.
+    try {
+      await this.$connect();
+      this.logger.log('Prisma conectado ao banco');
+    } catch (e) {
+      this.logger.error(`Banco indisponível no boot: ${(e as Error).message.split('\n')[0]}`);
+    }
   }
 
   async onModuleDestroy() {
