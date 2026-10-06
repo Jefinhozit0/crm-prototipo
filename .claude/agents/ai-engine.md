@@ -20,7 +20,7 @@ apps/ai-engine/
     └── justificativa.py   Geração de narrativa pt-BR
 ```
 
-A lógica é **espelho** do antigo motor TS em [apps/api/src/recomendacoes/ia/](apps/api/src/recomendacoes/ia/) — qualquer mudança de comportamento aqui precisa considerar que o NestJS chama via [apps/api/src/recomendacoes/ai-engine.service.ts](apps/api/src/recomendacoes/ai-engine.service.ts) e persiste com `geradoPor: rule-engine-py-v1`. Se mudar versão da engine, bumpe esse identificador.
+Este é o único motor (o antigo motor TS em `apps/api/src/recomendacoes/ia/` foi removido). O NestJS chama via [apps/api/src/recomendacoes/ai-engine.service.ts](apps/api/src/recomendacoes/ai-engine.service.ts), **valida a resposta com um schema zod** e persiste `geradoPor` = `engineVersion`. Qualquer mudança no contrato de saída exige ajustar esse schema. Se mudar o comportamento, bumpe `RULE_ENGINE_VERSION` em `src/main.py` e rode `pytest -q`.
 
 ## Contrato (não quebre sem coordenar)
 

@@ -1,8 +1,8 @@
 """
 Modelos de domínio do motor de IA.
-Espelham os tipos do NestJS — qualquer mudança aqui exige bater os tipos do TS.
+Espelham o contrato do NestJS (apps/api/src/recomendacoes/ai-engine.service.ts)
+— qualquer mudança aqui exige ajustar o schema zod de resposta de lá.
 """
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -34,6 +34,10 @@ MotivoDescarte = Literal[
 
 Fator = Literal["profileMatch", "diversification", "yield", "liquidity", "cost"]
 
+# Limites de payload: o serviço é interno, mas não confia no tamanho do input.
+MAX_CATALOGO = 2000
+MAX_POSICOES = 1000
+
 
 # ============================================================
 # Input — contexto enviado pelo NestJS
@@ -41,10 +45,10 @@ Fator = Literal["profileMatch", "diversification", "yield", "liquidity", "cost"]
 
 
 class Cliente(BaseModel):
-    id: str
-    nome: str
+    id: str = Field(min_length=1, max_length=64)
+    nome: str = Field(min_length=1, max_length=200)
     perfil: PerfilInvestidor
-    patrimonio: float = Field(ge=0)
+    patrimonio: float = Field(ge=0, le=1e15)
 
 
 class Suitability(BaseModel):
@@ -54,30 +58,31 @@ class Suitability(BaseModel):
 
 
 class Posicao(BaseModel):
-    produtoId: str
+    produtoId: str = Field(min_length=1, max_length=64)
     categoria: CategoriaProduto
-    valor: float = Field(ge=0)
+    valor: float = Field(ge=0, le=1e15)
 
 
 class Produto(BaseModel):
-    id: str
-    nome: str
-    emissor: str
+    id: str = Field(min_length=1, max_length=64)
+    nome: str = Field(min_length=1, max_length=200)
+    emissor: str = Field(min_length=1, max_length=200)
     categoria: CategoriaProduto
-    rentabilidadeAno: float
+    rentabilidadeAno: float = Field(ge=-100, le=1000)
     risco: int = Field(ge=1, le=5)
     tributacao: Tributacao = "TRIBUTADO"
     perfilMinimo: PerfilInvestidor
-    liquidez: str
-    taxaAdmin: float | None = None
+    liquidez: str = Field(min_length=1, max_length=30)
+    # None = produto sem taxa de administração
+    taxaAdmin: float | None = Field(default=None, ge=0, le=100)
     ativo: bool = True
 
 
 class RecommendRequest(BaseModel):
     cliente: Cliente
     suitability: Suitability
-    posicoes: list[Posicao]
-    catalog: list[Produto]
+    posicoes: list[Posicao] = Field(max_length=MAX_POSICOES)
+    catalog: list[Produto] = Field(max_length=MAX_CATALOGO)
     topN: int = Field(default=3, ge=1, le=10)
 
 
@@ -104,28 +109,23 @@ class DescarteAgregado(BaseModel):
     contexto: DescarteContexto | None = None
 
 
-class Fatores(BaseModel):
-    profileMatch: float
-    diversification: float
-    yield_: float = Field(alias="yield")
-    liquidity: float
-    cost: float
-
-    model_config = {"populate_by_name": True}
-
-
 class RecomendacaoOut(BaseModel):
     produtoId: str
     produtoNome: str
-    score: float
+    # Score usado no ranking, em [0, 1]
+    score: float = Field(ge=0, le=1)
     justificativa: str
     fatores: dict[str, float]
     pesos: dict[str, float]
     contribs: list[Contribuicao]
+    # Soma ponderada dos 5 fatores (sempre calculada — é o que a justificativa explica)
+    scoreRegras: float = Field(ge=0, le=1)
+    # De onde veio `score`: versão do modelo ML, "rule-engine" ou "rule-engine-fallback"
+    scoreFonte: str
 
 
 class RecommendResponse(BaseModel):
     recomendacoes: list[RecomendacaoOut]
     descartados: list[DescarteAgregado] = []
     totalAnalisados: int = 0
-    engineVersion: str = "rule-engine-py-v1.3"
+    engineVersion: str
