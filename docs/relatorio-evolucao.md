@@ -82,7 +82,7 @@ Esforço: P (< 1 dia), M (1–3 dias), G (> 3 dias). "Status" indica o que foi f
 | 28 | Médio | `ai-engine` | Score de ML sem limite [0,1]; origem do score não chegava à auditoria; yield comparado com produtos inativos | — | `clamp`, `scoreFonte`/`scoreRegras`, só ativos | P | ✅ |
 | 29 | Médio | `apps/api/src/recomendacoes/ia/` | Motor TS morto e divergente do Python | Migração incompleta | Removido (justificativa abaixo) | P | ✅ |
 | 30 | Médio | CSRF | Só SameSite=Lax | — | Checagem de `Origin` em métodos de escrita | P | ✅ |
-| 31 | Médio | deps Nest 10 | 8 vulnerabilidades de produção (multer, body-parser, lodash, @nestjs/core) | Correção só em Nest 11+ | Migração separada | G | ⏳ |
+| 31 | Médio | deps Nest 10 | 8 vulnerabilidades de produção (multer, body-parser, lodash, @nestjs/core) | Correção só em Nest 11+ | Migrado para Nest 11 (ver Rodada 3) | G | ✅ |
 | 32 | Baixo | web | Busca dispara request a cada tecla; lista "pisca" | — | Debounce + `keepPreviousData` | P | ✅ |
 | 33 | Baixo | web | Barra de alocação com `Infinity%` quando patrimônio = 0 | — | Base protegida | P | ✅ |
 | 34 | Baixo | motor | Textos "1 anos", markdown `**` dentro da frase, "você já tem" | — | Corrigidos | P | ✅ |
@@ -310,15 +310,46 @@ fecha de ponta a ponta na tela: oportunidade → funil → cliente → suitabili
 *apagados* pela edição, só alterados (a API não aceita `null` neles); o cliente novo nasce
 com perfil "Moderado" até a suitability ser aplicada (comportamento anterior, mantido).
 
+## Rodada 3 — NestJS 11 e CI (07/10/2026)
+
+**NestJS 10 → 11.2.7** (`@nestjs/config` 4.0.4, `@nestjs/jwt` 11, CLI 11; Express 4 → 5).
+Escolhi a 11 e não a 12: a 11 já traz o `multer` corrigido e o `@nestjs/config` fora da faixa
+vulnerável, e pular duas majors não trazia ganho de segurança.
+
+- **Vulnerabilidades em dependências de produção: 8 → 0.** Total com ferramentas de dev:
+  48 (início do projeto) → 25, todas em CLI/Jest/ESLint, fora do runtime.
+- Nenhuma mudança de código foi necessária para o Express 5: não há rotas curinga e todas
+  as queries são planas (o parser novo não muda nada). A instalação deixou duas cópias do
+  `@nestjs/common` (10 e 11), o que quebraria a injeção de dependência em runtime; o lock
+  foi regenerado para uma cópia só.
+- **Bug corrigido (anterior à migração)**: corpo acima do limite de 100 KB respondia **500**
+  e era logado como falha do servidor. Os erros 4xx do body-parser agora mantêm o status
+  (413, 400, 415) com mensagem em pt-BR. Teste e2e adicionado.
+- **Teste de fumaça da API compilada** contra PostgreSQL real (migrações + seed), 31 de 31
+  passos: boot recusado em produção com segredo fraco, health, login/cookies, queries
+  (inválidas, repetidas, aninhadas), 404, 400, 413, CSRF, X-Request-Id, Helmet, conversão
+  de lead com FK real, 422 sem suitability, auditoria sem CPF, logout.
+
+**CI** (`.github/workflows/ci.yml`), em PRs e push na `main`:
+- Node 24: `npm ci`, lint, typecheck, testes, build e `npm audit --omit=dev --audit-level=high`.
+- PostgreSQL 16 real: migrações do zero, checagem de drift contra o `schema.prisma` e seed.
+- Python 3.12: pytest do motor.
+
+O workflow foi reproduzido localmente (instalação limpa, lint, typecheck, testes, build,
+audit, migrações e seed em Postgres real), exceto o pytest, porque esta máquina não tem
+Python. **Ainda não rodou no GitHub**: isso acontece no primeiro push.
+
+**Testes**: API 138, web 67.
+
 ## Pendências
 
 | Pendência | Motivo de não ter sido feita | Esforço |
 |---|---|---|
-| Migrar NestJS 10 → 11 (fecha as 8 vulnerabilidades de produção) | Major version; exige revisão de breaking changes (Express 5, rotas) | M |
 | Rate limit e revogação em store compartilhado (Redis) | Infra; hoje vale por instância | P |
 | Re-hash de CPFs legados (SHA-256 puro) | Precisa do CPF em claro, que o sistema não guarda; requer recadastro ou importação da fonte | M |
 | Histórico de AUM e movimentações | Sem modelo de dados (gráficos marcados como demonstrativos) | M |
-| Limite FGC, custos de corretagem/come-cotas, CI/CD | Melhorias de domínio e de processo | M |
+| Limite FGC, custos de corretagem/come-cotas | Melhorias de domínio | M |
+| CD (deploy automatizado) e ambiente de homologação | CI existe (Rodada 3); falta a infraestrutura de destino | M |
 | Teste E2E de navegador (Playwright) | Não fazia parte desta rodada | P |
 | Prisma 5 → 6/7, TypeScript 7, ESLint 10 | Majors; sem necessidade imediata | M |
 
@@ -333,8 +364,8 @@ com perfil "Moderado" até a suitability ser aplicada (comportamento anterior, m
 3. **Modelo de ML**: treinado em dados sintéticos. Usar só depois de treinar com decisões
    reais, validar e monitorar viés; até lá, rodar só com regras.
 4. **Segurança**: sem MFA, sem recuperação de senha, sem pentest, rate limit em memória,
-   Nest 10 com vulnerabilidades conhecidas (mitigadas, não corrigidas).
-5. **Operação**: sem CI/CD, sem backups e restore testados, sem métricas/alertas/tracing
+   ~~Nest 10 com vulnerabilidades conhecidas~~ (Rodada 3: Nest 11, 0 vulnerabilidades de produção).
+5. **Operação**: CI existe (Rodada 3), mas sem CD, sem backups e restore testados, sem métricas/alertas/tracing
    (só logs estruturados e health checks), sem ambiente de homologação.
 6. **Integrações**: não há integração com custódia, plataforma de ordens nem cadastro
    oficial; carteira e catálogo são dados de demonstração.
@@ -342,8 +373,8 @@ com perfil "Moderado" até a suitability ser aplicada (comportamento anterior, m
 ## Próximos passos
 
 1. Revisão de compliance das regras de suitability e do motor (bloqueante).
-2. CI (lint, typecheck, build, testes, `npm audit --omit=dev`, pytest) + ambiente de homologação.
-3. Migração NestJS 11 e store compartilhado (Redis) para rate limit.
+2. ~~CI (lint, typecheck, build, testes, `npm audit --omit=dev`, pytest)~~ (Rodada 3) + ambiente de homologação.
+3. ~~Migração NestJS 11~~ (Rodada 3) e store compartilhado (Redis) para rate limit.
 4. Pacote LGPD: retenção, direitos do titular, re-hash de CPFs, RIPD.
 5. Observabilidade: métricas, alertas, tracing com o `requestId` já propagado; backups testados.
 6. MFA para todos os perfis e recuperação de senha.

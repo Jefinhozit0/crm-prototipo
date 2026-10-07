@@ -32,6 +32,8 @@ const NOME_STATUS: Record<number, string> = {
   403: 'Forbidden',
   404: 'Not Found',
   409: 'Conflict',
+  413: 'Payload Too Large',
+  415: 'Unsupported Media Type',
   422: 'Unprocessable Entity',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
@@ -117,6 +119,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
 
+    const erroDoCorpo = erroDoBodyParser(exception);
+    if (erroDoCorpo) return erroDoCorpo;
+
     if (exception instanceof SyntaxError && request?.method !== 'GET') {
       // JSON malformado no body (body-parser)
       return { statusCode: 400, message: 'Corpo da requisição inválido', error: NOME_STATUS[400] };
@@ -182,4 +187,28 @@ export class AllExceptionsFilter implements ExceptionFilter {
         };
     }
   }
+}
+
+// Mensagens próprias: a do body-parser é em inglês e cita detalhes de implementação
+const MENSAGEM_CORPO: Record<string, string> = {
+  'entity.too.large': 'Corpo da requisição grande demais',
+  'entity.parse.failed': 'Corpo da requisição inválido',
+  'charset.unsupported': 'Codificação do corpo não suportada',
+  'encoding.unsupported': 'Codificação do corpo não suportada',
+};
+
+/**
+ * Erros do body-parser (http-errors) não são HttpException: chegam com
+ * `status` 4xx, `expose: true` e um `type` (ex.: payload acima do limite → 413).
+ * Sem isto viravam 500 e poluíam o log como falha do servidor.
+ */
+function erroDoBodyParser(exception: unknown): CorpoErro | null {
+  const e = exception as { status?: unknown; expose?: unknown; type?: unknown } | null;
+  if (!e || typeof e !== 'object' || e.expose !== true || typeof e.status !== 'number') return null;
+  if (e.status < 400 || e.status >= 500) return null;
+  return {
+    statusCode: e.status,
+    message: (typeof e.type === 'string' && MENSAGEM_CORPO[e.type]) || 'Requisição inválida',
+    error: NOME_STATUS[e.status] ?? 'Error',
+  };
 }

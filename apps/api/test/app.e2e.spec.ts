@@ -327,6 +327,16 @@ describe('API (e2e com banco em memória)', () => {
       expect(res.body.dependencias.aiEngine.ok).toBe(true);
     });
 
+    it('corpo acima do limite → 413 (não 500) e JSON malformado → 400', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const grande = await agent
+        .post('/api/leads')
+        .send({ nome: 'x'.repeat(150_000), origem: 'Teste' })
+        .expect(413);
+      expect(grande.body).toMatchObject({ statusCode: 413, message: 'Corpo da requisição grande demais' });
+      await agent.post('/api/leads').set('Content-Type', 'application/json').send('{"nome":').expect(400);
+    });
+
     it('id de rota malformado → 400 antes de tocar o banco', async () => {
       const agent = await logar(c, 'admin@ce.com');
       await agent.get('/api/clientes/1%20OR%201=1').expect(400);
