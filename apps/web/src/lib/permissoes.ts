@@ -12,6 +12,10 @@ export function permissoesDe(role: UserRole | undefined) {
     podeOperar: role === "ADMIN" || role === "ASSESSOR",
     /** Curadoria do catálogo de produtos */
     podeGerirCatalogo: role === "ADMIN",
+    /** Escolher o assessor responsável (assessor só cadastra na própria carteira) */
+    podeAtribuirResponsavel: role === "ADMIN",
+    /** Inativar/reativar cliente (exclusão lógica) */
+    podeInativarCliente: role === "ADMIN",
     podeVerAuditoria: role === "ADMIN" || role === "COMPLIANCE",
   };
 }

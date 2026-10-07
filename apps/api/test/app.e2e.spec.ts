@@ -404,6 +404,17 @@ describe('API (e2e com banco em memória)', () => {
       expect(c.prisma.linhas('suitability')).toHaveLength(1);
     });
 
+    it('assessor não inativa nem reativa cliente por PATCH de status', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'INATIVO' }).expect(403);
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'BLOQUEADO' }).expect(200);
+
+      const admin = await logar(c, 'admin@ce.com');
+      await admin.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'INATIVO' }).expect(200);
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'ATIVO' }).expect(403);
+      await admin.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'ATIVO' }).expect(200);
+    });
+
     it('detalhado registra acesso a dado sensível', async () => {
       const agent = await logar(c, 'joao@ce.com');
       const res = await agent.get(`/api/clientes/${c.clienteJoao.id}/detalhado`).expect(200);
@@ -597,6 +608,95 @@ describe('API (e2e com banco em memória)', () => {
       await agent.patch(`/api/leads/${lead.id}`).send({ estagio: 'FECHADO' }).expect(400);
       await agent.post(`/api/leads/${lead.id}/mover-estagio`).send({ estagio: 'PROPOSTA' }).expect(200);
       expect(c.prisma.linhas('estagioHistorico').map((h) => h.estagio)).toEqual(['PROSPECCAO', 'PROPOSTA']);
+    });
+
+    it('conversão cria o cliente, fecha o lead e audita, tudo na mesma transação', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const lead = (
+        await agent
+          .post('/api/leads')
+          .send({ nome: 'Lia Convertida', email: 'lia@x.com', origem: 'Evento', valorEstimado: 750000 })
+          .expect(201)
+      ).body;
+
+      const res = await agent
+        .post(`/api/leads/${lead.id}/converter`)
+        .send({ cpf: '529.982.247-25', uf: 'sp' })
+        .expect(201);
+
+      // Nome, e-mail e patrimônio herdados do lead; responsável idem
+      expect(res.body.cliente).toMatchObject({
+        nome: 'Lia Convertida',
+        email: 'lia@x.com',
+        patrimonio: 750000,
+        uf: 'SP',
+        status: 'PROSPECTO',
+        responsavelId: c.joao.id,
+      });
+      expect(res.body.cliente).not.toHaveProperty('cpfHash');
+      expect(res.body.lead).toMatchObject({ estagio: 'FECHADO', clienteId: res.body.cliente.id });
+      expect(res.body.lead.cliente).toEqual({ id: res.body.cliente.id, nome: 'Lia Convertida' });
+      expect(c.prisma.linhas('estagioHistorico').at(-1)).toMatchObject({ estagio: 'FECHADO', notas: 'Convertido em cliente' });
+
+      const criacao = auditorias(c, 'CRIACAO').find((a) => a.entidade === 'Cliente');
+      expect(criacao?.diff).toMatchObject({ origemLeadId: lead.id });
+      expect(JSON.stringify(auditorias(c))).not.toContain('52998224725');
+
+      // Segunda conversão, mudança de estágio e exclusão ficam bloqueadas
+      await agent.post(`/api/leads/${lead.id}/converter`).send({ cpf: '11144477735' }).expect(409);
+      await agent.post(`/api/leads/${lead.id}/mover-estagio`).send({ estagio: 'PROPOSTA' }).expect(409);
+      await agent.delete(`/api/leads/${lead.id}`).expect(409);
+    });
+
+    it('conversão com CPF duplicado não altera nada (rollback)', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      await agent.post('/api/clientes').send({ nome: 'Já Existe', email: 'ja@x.com', cpf: '52998224725' }).expect(201);
+      const lead = (await agent.post('/api/leads').send({ nome: 'Lead Dup', email: 'dup@x.com', origem: 'Inbound' })).body;
+      const clientesAntes = c.prisma.linhas('cliente').length;
+
+      await agent.post(`/api/leads/${lead.id}/converter`).send({ cpf: '52998224725' }).expect(409);
+
+      expect(c.prisma.linhas('cliente')).toHaveLength(clientesAntes);
+      const depois = c.prisma.linhas('lead').find((l) => l.id === lead.id);
+      expect(depois).toMatchObject({ estagio: 'PROSPECCAO', clienteId: null });
+    });
+
+    it('conversão exige e-mail quando o lead não tem, recusa lead perdido e respeita o escopo', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const semEmail = (await joao.post('/api/leads').send({ nome: 'Sem Email', origem: 'Inbound' })).body;
+      await joao.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725' }).expect(422);
+
+      await joao.post(`/api/leads/${semEmail.id}/mover-estagio`).send({ estagio: 'PERDIDO' }).expect(200);
+      await joao
+        .post(`/api/leads/${semEmail.id}/converter`)
+        .send({ cpf: '52998224725', email: 'a@x.com' })
+        .expect(422);
+
+      const marina = await logar(c, 'marina@ce.com');
+      await marina.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725', email: 'a@x.com' }).expect(404);
+      const leitor = await logar(c, 'leitor@ce.com');
+      await leitor.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725', email: 'a@x.com' }).expect(403);
+    });
+
+    it('conversão rejeita campos que não podem vir do formulário', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const lead = (await agent.post('/api/leads').send({ nome: 'Lead P', email: 'p@x.com', origem: 'Inbound' })).body;
+      await agent
+        .post(`/api/leads/${lead.id}/converter`)
+        .send({ cpf: '52998224725', perfil: 'AGRESSIVO' })
+        .expect(400);
+    });
+  });
+
+  describe('usuários', () => {
+    it('lista de assessores só para ADMIN e sem dados de credencial', async () => {
+      const admin = await logar(c, 'admin@ce.com');
+      const res = await admin.get('/api/usuarios/assessores').expect(200);
+      expect(res.body.map((u: { nome: string }) => u.nome)).toEqual(['João Diniz', 'Marina Lopes']);
+      expect(Object.keys(res.body[0]).sort()).toEqual(['email', 'id', 'nome']);
+
+      const joao = await logar(c, 'joao@ce.com');
+      await joao.get('/api/usuarios/assessores').expect(403);
     });
   });
 });

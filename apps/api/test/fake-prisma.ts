@@ -25,7 +25,11 @@ const RELACOES: Record<string, Record<string, Rel>> = {
   },
   refreshToken: { user: ['one', 'user', 'userId'] },
   auditoria: { user: ['one', 'user', 'userId'] },
-  lead: { responsavel: ['one', 'user', 'responsavelId'], estagioHistorico: ['many', 'estagioHistorico', 'leadId'] },
+  lead: {
+    responsavel: ['one', 'user', 'responsavelId'],
+    cliente: ['one', 'cliente', 'clienteId'],
+    estagioHistorico: ['many', 'estagioHistorico', 'leadId'],
+  },
   interacao: { cliente: ['one', 'cliente', 'clienteId'], autor: ['one', 'user', 'autorId'] },
 };
 
@@ -148,9 +152,15 @@ export class FakePrisma {
   }
 
   private checarUnicos(nome: string, row: Row) {
-    const unicos: Record<string, string[]> = { user: ['email'], cliente: ['email', 'cpfHash'] };
+    const unicos: Record<string, string[]> = {
+      user: ['email'],
+      cliente: ['email', 'cpfHash'],
+      lead: ['clienteId'],
+    };
     for (const campo of unicos[nome] ?? []) {
-      if (this.linhas(nome).some((r) => r[campo] === row[campo])) {
+      // Como no Postgres, NULL não conflita com NULL
+      if (row[campo] === null || row[campo] === undefined) continue;
+      if (this.linhas(nome).some((r) => r.id !== row.id && r[campo] === row[campo])) {
         throw new Prisma.PrismaClientKnownRequestError('unique', {
           code: 'P2002', clientVersion: 'fake', meta: { target: [campo] },
         });

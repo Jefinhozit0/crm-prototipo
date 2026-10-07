@@ -12,6 +12,7 @@ import { LeadsModule } from './leads/leads.module';
 import { ProdutosModule } from './produtos/produtos.module';
 import { RecomendacoesModule } from './recomendacoes/recomendacoes.module';
 import { SuitabilityModule } from './suitability/suitability.module';
+import { UsuariosModule } from './usuarios/usuarios.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -34,6 +35,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ProdutosModule,
     RecomendacoesModule,
     SuitabilityModule,
+    UsuariosModule,
   ],
   controllers: [HealthController],
   providers: [

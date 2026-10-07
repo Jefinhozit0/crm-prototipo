@@ -112,8 +112,14 @@ Prisma trocado por um banco em memória — não precisam de Postgres.
 |---|---|---|
 | POST | `/api/auth/login` · `/refresh` · `/logout` | público |
 | GET | `/api/clientes` · `/:id` · `/:id/detalhado` | autenticado (escopo) |
-| POST/PATCH | `/api/clientes` · `/:id` | ADMIN, ASSESSOR |
+| POST/PATCH | `/api/clientes` · `/:id` | ADMIN, ASSESSOR (entrar/sair de INATIVO: só ADMIN) |
 | DELETE | `/api/clientes/:id` (inativa — não apaga) | ADMIN |
+| GET | `/api/leads` · `/board` · `/:id` | autenticado (escopo) |
+| POST/PATCH/DELETE | `/api/leads` · `/:id` · `/:id/mover-estagio` | ADMIN, ASSESSOR |
+| POST | `/api/leads/:id/converter` (cria o cliente e fecha o lead, numa transação) | ADMIN, ASSESSOR |
+| GET | `/api/produtos` · `/:id` | autenticado |
+| POST/PATCH/DELETE | `/api/produtos` · `/:id` (DELETE desativa) | ADMIN |
+| GET | `/api/usuarios/assessores` | ADMIN |
 | GET/POST | `/api/suitability` · `/questionario` · `/cliente/:id` | leitura: todos · aplicar: ADMIN, ASSESSOR |
 | POST | `/api/recomendacoes/generate` | ADMIN, ASSESSOR |
 | PATCH | `/api/recomendacoes/:id/aprovar` · `/recusar` | ADMIN, ASSESSOR |

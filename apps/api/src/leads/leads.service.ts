@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { EstagioPipeline, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditoriaService, diffCampos } from '../auditoria/auditoria.service';
@@ -7,7 +12,9 @@ import { sanitizeLead } from '../common/serializers';
 import type { ContextoRequisicao } from '../common/request-context';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { escopoLead, resolverResponsavel } from '../auth/escopo';
+import { ClientesService } from '../clientes/clientes.service';
 import type {
+  ConverterLeadDto,
   LeadBoardQueryDto,
   LeadCreateDto,
   LeadQueryDto,
@@ -17,6 +24,7 @@ import type {
 
 const includeRel = {
   responsavel: { select: { id: true, nome: true, email: true } },
+  cliente: { select: { id: true, nome: true } },
 } satisfies Prisma.LeadInclude;
 
 const ESTAGIOS: EstagioPipeline[] = [
@@ -36,6 +44,7 @@ export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditoria: AuditoriaService,
+    private readonly clientes: ClientesService,
   ) {}
 
   async list(user: AuthUser, query: LeadQueryDto) {
@@ -148,6 +157,9 @@ export class LeadsService {
   /** Move o lead pra outro estágio e registra no histórico atomicamente */
   async moverEstagio(user: AuthUser, id: string, dto: MoverEstagioDto, ctx?: ContextoRequisicao) {
     const antes = await this.garantirNoEscopo(user, id);
+    if (antes.clienteId) {
+      throw new ConflictException('Lead já convertido em cliente: o estágio fica como Fechado');
+    }
     return this.prisma.$transaction(async (tx) => {
       const lead = await tx.lead.update({
         where: { id },
@@ -174,6 +186,10 @@ export class LeadsService {
 
   async remove(user: AuthUser, id: string, ctx?: ContextoRequisicao) {
     const antes = await this.garantirNoEscopo(user, id);
+    // O lead convertido é a origem registrada do cliente — não some
+    if (antes.clienteId) {
+      throw new ConflictException('Lead já convertido em cliente não pode ser excluído');
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.lead.delete({ where: { id } });
       await this.auditoria.registrarEm(tx, {
@@ -186,6 +202,68 @@ export class LeadsService {
       });
     });
     return { id, deleted: true };
+  }
+
+  /**
+   * Converte o lead em cliente numa única transação: cria o cliente (mesmas
+   * regras do cadastro), vincula o lead, fecha o funil e registra o histórico.
+   * O cliente herda o responsável do lead e nasce PROSPECTO, sem suitability.
+   */
+  async converter(user: AuthUser, id: string, dto: ConverterLeadDto, ctx?: ContextoRequisicao) {
+    const lead = await this.garantirNoEscopo(user, id);
+    if (lead.clienteId) throw new ConflictException('Este lead já foi convertido em cliente');
+    if (lead.estagio === 'PERDIDO') {
+      throw new UnprocessableEntityException(
+        'Lead perdido não pode ser convertido. Mova-o de volta ao funil antes.',
+      );
+    }
+    const email = dto.email ?? lead.email;
+    if (!email) {
+      throw new UnprocessableEntityException('Informe o e-mail: o lead não tem e-mail cadastrado');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const cliente = await this.clientes.criarEm(
+        tx,
+        user,
+        {
+          ...dto,
+          nome: dto.nome ?? lead.nome,
+          email,
+          telefone: dto.telefone ?? lead.telefone ?? undefined,
+          patrimonio: dto.patrimonio ?? Number(lead.valorEstimado.toString()),
+          perfil: 'MODERADO',
+          status: 'PROSPECTO',
+          responsavelId: lead.responsavelId ?? undefined,
+        },
+        ctx,
+        lead.id,
+      );
+      const atualizado = await tx.lead.update({
+        where: { id },
+        data: {
+          clienteId: cliente.id,
+          estagio: 'FECHADO',
+          fechadoEm: lead.fechadoEm ?? new Date(),
+        },
+        include: includeRel,
+      });
+      await tx.estagioHistorico.create({
+        data: { leadId: id, estagio: 'FECHADO', notas: 'Convertido em cliente' },
+      });
+      await this.auditoria.registrarEm(tx, {
+        acao: 'ATUALIZACAO',
+        entidade: 'Lead',
+        entidadeId: id,
+        userId: user.id,
+        diff: {
+          antes: { estagio: lead.estagio, clienteId: null },
+          depois: { estagio: 'FECHADO', clienteId: cliente.id },
+        },
+        contexto: ctx,
+      });
+      return { lead: sanitizeLead(atualizado), cliente };
+    });
   }
 
   private async garantirNoEscopo(user: AuthUser, id: string) {

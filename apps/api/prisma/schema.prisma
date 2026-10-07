@@ -115,6 +115,7 @@ model Cliente {
   recomendacoes Recomendacao[]
   interacoes    Interacao[]
   posicoes      Posicao[]
+  leadOrigem    Lead? // lead que foi convertido neste cliente, se houver
 
   @@index([responsavelId, status])
   @@index([perfil])
@@ -166,9 +167,10 @@ model Lead {
   responsavelId String?
   responsavel   User?   @relation("LeadResponsavel", fields: [responsavelId], references: [id])
 
-  // Quando vira cliente, aponta para o registro
-  clienteId       String?
-  clienteIdUnique String? @unique // marker pra evitar duplicar conversão
+  // Quando vira cliente, aponta para o registro. @unique: cada cliente nasce de
+  // no máximo um lead (e o lead converte uma vez só).
+  clienteId String?  @unique
+  cliente   Cliente? @relation(fields: [clienteId], references: [id], onDelete: Restrict)
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt

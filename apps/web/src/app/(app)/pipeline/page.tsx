@@ -1,24 +1,22 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Plus, UserCheck } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { EmBreveButton } from "@/components/demo";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/query-states";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LeadDetalheDialog } from "@/components/lead-detalhe-dialog";
+import { LeadFormDialog } from "@/components/forms/lead-form-dialog";
+import { ConverterLeadDialog } from "@/components/forms/converter-lead-dialog";
 import { useLeadsBoard } from "@/lib/queries";
+import { usePermissoes } from "@/lib/permissoes";
+import { estagioLabel } from "@/lib/labels";
 import { fmt } from "@/lib/format";
-import type { EstagioPipeline } from "@/types/api";
-
-const estagioLabel: Record<EstagioPipeline, string> = {
-  PROSPECCAO: "Prospecção",
-  QUALIFICACAO: "Qualificação",
-  PROPOSTA: "Proposta",
-  NEGOCIACAO: "Negociação",
-  FECHADO: "Fechado",
-  PERDIDO: "Perdido",
-};
+import type { EstagioPipeline, Lead } from "@/types/api";
 
 const estagioCor: Record<EstagioPipeline, string> = {
   PROSPECCAO: "border-slate-300",
@@ -30,7 +28,13 @@ const estagioCor: Record<EstagioPipeline, string> = {
 };
 
 export default function PipelinePage() {
+  const router = useRouter();
   const { data, isLoading, error, refetch } = useLeadsBoard();
+  const { podeOperar } = usePermissoes();
+  const [leadAberto, setLeadAberto] = useState<string | null>(null);
+  // null = fechado; undefined dentro do objeto = cadastro novo
+  const [formLead, setFormLead] = useState<{ lead?: Lead } | null>(null);
+  const [convertendo, setConvertendo] = useState<Lead | null>(null);
 
   const totalPipeline = data?.reduce((acc, col) => acc + col.total, 0) ?? 0;
   const totalLeads = data?.reduce((acc, col) => acc + col.count, 0) ?? 0;
@@ -45,10 +49,12 @@ export default function PipelinePage() {
             : "Carregando funil..."
         }
         actions={
-          <EmBreveButton variant="default">
-            <Plus className="h-4 w-4" aria-hidden />
-            Nova oportunidade
-          </EmBreveButton>
+          podeOperar && (
+            <Button size="sm" onClick={() => setFormLead({})}>
+              <Plus className="h-4 w-4" aria-hidden />
+              Nova oportunidade
+            </Button>
+          )
         }
       />
 
@@ -86,10 +92,23 @@ export default function PipelinePage() {
                 {col.itens.map((lead) => (
                   <Card
                     key={lead.id}
-                    className="transition-shadow"
+                    className="relative transition-shadow hover:shadow-md hover:border-primary/30 focus-within:ring-2 focus-within:ring-ring/50"
                   >
                     <CardContent className="p-3 space-y-2">
-                      <p className="font-medium text-sm leading-tight">{lead.nome}</p>
+                      {/* Botão cobrindo o card: abre a ficha (teclado e leitor de tela) */}
+                      <button
+                        type="button"
+                        onClick={() => setLeadAberto(lead.id)}
+                        className="font-medium text-sm leading-tight text-left outline-none after:absolute after:inset-0 after:content-['']"
+                      >
+                        {lead.nome}
+                      </button>
+                      {lead.clienteId && (
+                        <Badge variant="secondary" className="text-[10px] gap-1">
+                          <UserCheck className="h-3 w-3" aria-hidden />
+                          Cliente
+                        </Badge>
+                      )}
                       <p className="font-mono text-sm text-emerald-700 font-semibold tabular-nums">
                         {fmt.brl(lead.valorEstimado)}
                       </p>
@@ -113,6 +132,34 @@ export default function PipelinePage() {
             </div>
           ))}
         </div>
+      )}
+
+      <LeadDetalheDialog
+        leadId={leadAberto}
+        onOpenChange={(v) => !v && setLeadAberto(null)}
+        onEditar={(lead) => {
+          setLeadAberto(null);
+          setFormLead({ lead });
+        }}
+        onConverter={(lead) => {
+          setLeadAberto(null);
+          setConvertendo(lead);
+        }}
+      />
+
+      <LeadFormDialog
+        open={!!formLead}
+        onOpenChange={(v) => !v && setFormLead(null)}
+        lead={formLead?.lead}
+      />
+
+      {convertendo && (
+        <ConverterLeadDialog
+          lead={convertendo}
+          open
+          onOpenChange={(v) => !v && setConvertendo(null)}
+          onConvertido={(cliente) => router.push(`/clientes/${cliente.id}`)}
+        />
       )}
     </>
   );

@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -153,36 +153,54 @@ export class ClientesService {
   }
 
   async create(user: AuthUser, dto: ClienteCreateDto, ctx?: ContextoRequisicao) {
+    return this.prisma.$transaction((tx) => this.criarEm(tx, user, dto, ctx));
+  }
+
+  /**
+   * Cria o cliente dentro de uma transação existente — usado também pela
+   * conversão de lead, pra que cliente e lead mudem juntos ou nada mude.
+   * `origemLeadId` só entra na auditoria.
+   */
+  async criarEm(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    dto: ClienteCreateDto,
+    ctx?: ContextoRequisicao,
+    origemLeadId?: string,
+  ) {
     const { cpf, responsavelId, ...rest } = dto;
     const cpfHash = hashCpf(cpf, this.segredoCpf());
 
     // Duplicata também contra o formato legado (sha256 puro) de registros antigos
-    const existente = await this.prisma.cliente.findFirst({
+    const existente = await tx.cliente.findFirst({
       where: { cpfHash: { in: [cpfHash, hashCpfLegado(cpf)] } },
       select: { id: true },
     });
     if (existente) throw new ConflictException('Já existe um cliente com este CPF');
 
-    return this.prisma.$transaction(async (tx) => {
-      const cliente = await tx.cliente.create({
-        data: {
-          ...rest,
-          responsavelId: resolverResponsavel(user, responsavelId),
-          cpfHash,
-          cpfMasked: maskCpf(cpf),
-        },
-        include: includeResponsavel,
-      });
-      await this.auditoria.registrarEm(tx, {
-        acao: 'CRIACAO',
-        entidade: 'Cliente',
-        entidadeId: cliente.id,
-        userId: user.id,
-        diff: { status: cliente.status, perfil: cliente.perfil, responsavelId: cliente.responsavelId },
-        contexto: ctx,
-      });
-      return sanitizeCliente(cliente);
+    const cliente = await tx.cliente.create({
+      data: {
+        ...rest,
+        responsavelId: resolverResponsavel(user, responsavelId),
+        cpfHash,
+        cpfMasked: maskCpf(cpf),
+      },
+      include: includeResponsavel,
     });
+    await this.auditoria.registrarEm(tx, {
+      acao: 'CRIACAO',
+      entidade: 'Cliente',
+      entidadeId: cliente.id,
+      userId: user.id,
+      diff: {
+        status: cliente.status,
+        perfil: cliente.perfil,
+        responsavelId: cliente.responsavelId,
+        ...(origemLeadId && { origemLeadId }),
+      },
+      contexto: ctx,
+    });
+    return sanitizeCliente(cliente);
   }
 
   async update(user: AuthUser, id: string, dto: ClienteUpdateDto, ctx?: ContextoRequisicao) {
@@ -197,6 +215,12 @@ export class ClientesService {
       status: true,
       responsavelId: true,
     });
+
+    // Entrar ou sair de INATIVO equivale à exclusão lógica (DELETE), que é só do ADMIN
+    const mudaStatus = dto.status !== undefined && dto.status !== antes.status;
+    if (mudaStatus && (dto.status === 'INATIVO' || antes.status === 'INATIVO') && user.role !== 'ADMIN') {
+      throw new ForbiddenException('Apenas administradores podem inativar ou reativar clientes');
+    }
 
     const data: Prisma.ClienteUncheckedUpdateInput = { ...dto };
     if (dto.responsavelId !== undefined) {

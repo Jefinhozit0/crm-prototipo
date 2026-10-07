@@ -7,7 +7,9 @@ import {
   FileCheck2,
   Mail,
   MapPin,
+  Pencil,
   Phone,
+  Power,
   Sparkles,
   Wallet,
 } from "lucide-react";
@@ -26,7 +28,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/query-states";
 import { ThinkingDialog } from "@/components/thinking-dialog";
 import { RecomendacaoDetalheDialog } from "@/components/recomendacao-detalhe-dialog";
-import { useClienteDetalhado } from "@/lib/queries";
+import { ClienteFormDialog } from "@/components/forms/cliente-form-dialog";
+import { ConfirmarDialog } from "@/components/confirmar-dialog";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
+import {
+  useAtualizarCliente,
+  useClienteDetalhado,
+  useInativarCliente,
+} from "@/lib/queries";
 import { usePermissoes } from "@/lib/permissoes";
 import {
   categoriaLabel,
@@ -75,8 +85,12 @@ export default function ClienteDetalhePage({
 }) {
   const { id } = use(params);
   const { data: cliente, isLoading, error, refetch } = useClienteDetalhado(id);
-  const { podeOperar } = usePermissoes();
+  const { podeOperar, podeInativarCliente } = usePermissoes();
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [confirmandoStatus, setConfirmandoStatus] = useState(false);
+  const inativar = useInativarCliente();
+  const atualizar = useAtualizarCliente(id);
   const [recomendacaoDetalheId, setRecomendacaoDetalheId] = useState<string | null>(null);
 
   if (isLoading) {
@@ -130,6 +144,22 @@ export default function ClienteDetalhePage({
   );
 
   const pendentes = cliente.recomendacoes.filter((r) => r.status === "PENDENTE");
+  const inativo = cliente.status === "INATIVO";
+
+  async function alternarStatus() {
+    try {
+      if (inativo) {
+        await atualizar.mutateAsync({ status: "ATIVO" });
+        toast.success("Cliente reativado");
+      } else {
+        await inativar.mutateAsync(id);
+        toast.success("Cliente inativado");
+      }
+      setConfirmandoStatus(false);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Não foi possível alterar o status do cliente");
+    }
+  }
 
   return (
     <>
@@ -193,6 +223,28 @@ export default function ClienteDetalhePage({
                   <span>Assessor: {cliente.responsavel.nome}</span>
                 )}
               </div>
+
+              {(podeOperar || podeInativarCliente) && (
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {podeOperar && (
+                    <Button size="sm" variant="outline" onClick={() => setEditando(true)}>
+                      <Pencil className="h-3.5 w-3.5" aria-hidden />
+                      Editar dados
+                    </Button>
+                  )}
+                  {podeInativarCliente && (
+                    <Button
+                      size="sm"
+                      variant={inativo ? "outline" : "ghost"}
+                      className={cn(!inativo && "text-destructive")}
+                      onClick={() => setConfirmandoStatus(true)}
+                    >
+                      <Power className="h-3.5 w-3.5" aria-hidden />
+                      {inativo ? "Reativar" : "Inativar"}
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="text-right">
@@ -506,6 +558,23 @@ export default function ClienteDetalhePage({
         }}
         open={thinkingOpen}
         onOpenChange={setThinkingOpen}
+      />
+
+      <ClienteFormDialog open={editando} onOpenChange={setEditando} cliente={cliente} />
+
+      <ConfirmarDialog
+        open={confirmandoStatus}
+        onOpenChange={setConfirmandoStatus}
+        titulo={inativo ? "Reativar cliente?" : "Inativar cliente?"}
+        descricao={
+          inativo
+            ? `${cliente.nome} volta a ficar ativo e pode receber recomendações (com suitability válida).`
+            : `${cliente.nome} deixa de receber recomendações. Suitability, recomendações e histórico ficam guardados.`
+        }
+        confirmar={inativo ? "Reativar" : "Inativar"}
+        destrutivo={!inativo}
+        pendente={inativar.isPending || atualizar.isPending}
+        onConfirmar={alternarStatus}
       />
 
       <RecomendacaoDetalheDialog

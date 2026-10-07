@@ -88,7 +88,7 @@ Esforço: P (< 1 dia), M (1–3 dias), G (> 3 dias). "Status" indica o que foi f
 | 34 | Baixo | motor | Textos "1 anos", markdown `**` dentro da frase, "você já tem" | — | Corrigidos | P | ✅ |
 | 35 | Baixo | logout web | Falha na API de logout virava rejeição não tratada | `try/finally` sem `catch` | Corrigido (achado pelo teste) | P | ✅ |
 | 36 | Baixo | Python | `requirements.txt` sem teto de versão (pandas 3 já instalava) | — | Faixas até a próxima major | P | ✅ |
-| 37 | Melhoria | `Lead.clienteId` | Sem FK para `clientes`; coluna `clienteIdUnique` sem uso | — | FK com limpeza de órfãos (exige revisão dos dados reais) | P | ⏳ |
+| 37 | Melhoria | `Lead.clienteId` | Sem FK para `clientes`; coluna `clienteIdUnique` sem uso | — | FK única; a migração aborta se houver órfãos (ver Rodada 2) | P | ✅ |
 | 38 | Melhoria | domínio | FGC (R$ 250 mil por CPF/instituição) não é considerado | — | Regra de limite FGC para CDB/LCI/LCA | M | ⏳ |
 
 ## Alterações realizadas
@@ -273,6 +273,43 @@ Resultado final: `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build
 **Não testado**: o front rodando contra a API real no navegador (`next start` + proxy); a
 UI foi validada por testes de componente e por build. Também não houve teste de carga.
 
+## Rodada 2 — Cadastros pela UI (07/10/2026)
+
+Os endpoints de escrita existiam, mas a UI só tinha botões "em breve". Agora o fluxo comercial
+fecha de ponta a ponta na tela: oportunidade → funil → cliente → suitability → recomendação.
+
+**Web**
+- Cliente: cadastro (em Leads & Clientes) e edição (na ficha); ADMIN inativa/reativa com
+  confirmação. CPF validado no navegador com o mesmo algoritmo da API.
+- Pipeline: "Nova oportunidade"; cada card abre a ficha (dados, histórico do funil, mover de
+  estágio com nota, editar, excluir, converter em cliente).
+- Catálogo (ADMIN): novo produto, edição, desativar (com confirmação) e reativar; filtro
+  "Mostrar inativos".
+- Formulários: valores em pt-BR ("1.500.000,00"), erros de validação da API levados ao campo
+  certo (incluindo CPF duplicado), edição envia só os campos alterados (a auditoria registra
+  exatamente o que mudou), ADMIN escolhe o assessor responsável.
+
+**API**
+- `POST /leads/:id/converter`: cria o cliente (mesmas regras do cadastro) e fecha o lead
+  numa única transação; herda nome, e-mail, telefone, valor e responsável do lead; recusa
+  lead já convertido (409), perdido (422) ou sem e-mail (422). Lead convertido não muda de
+  estágio nem é excluído (é a origem registrada do cliente).
+- `GET /usuarios/assessores` (ADMIN) para a escolha do responsável.
+- **Correção de autorização**: assessor conseguia inativar cliente por `PATCH {status:
+  "INATIVO"}`, contornando a regra de que só ADMIN inativa. Agora entrar ou sair de INATIVO
+  exige ADMIN.
+- Migração `20261007120000_lead_cliente_fk`: `leads.clienteId` vira FK única e
+  `clienteIdUnique` (nunca usada) sai. **Não corrige dados**: se houver lead órfão, dois
+  leads no mesmo cliente ou marcador divergente, aborta com a contagem para revisão humana.
+  Validada em PostgreSQL real (encoding UTF8 e WIN1252): aborta com órfão, aplica após a
+  correção, e o banco resultante bate com o `schema.prisma`.
+
+**Testes**: API 137 (antes 131), web 67 (antes 38). Lint, typecheck e build passam.
+
+**Limitações conhecidas**: campos opcionais (telefone, cidade, ticker, descrição) não podem ser
+*apagados* pela edição, só alterados (a API não aceita `null` neles); o cliente novo nasce
+com perfil "Moderado" até a suitability ser aplicada (comportamento anterior, mantido).
+
 ## Pendências
 
 | Pendência | Motivo de não ter sido feita | Esforço |
@@ -280,8 +317,6 @@ UI foi validada por testes de componente e por build. Também não houve teste d
 | Migrar NestJS 10 → 11 (fecha as 8 vulnerabilidades de produção) | Major version; exige revisão de breaking changes (Express 5, rotas) | M |
 | Rate limit e revogação em store compartilhado (Redis) | Infra; hoje vale por instância | P |
 | Re-hash de CPFs legados (SHA-256 puro) | Precisa do CPF em claro, que o sistema não guarda; requer recadastro ou importação da fonte | M |
-| FK `leads.clienteId` e conversão lead → cliente | Exige olhar os dados reais antes de limpar órfãos | P |
-| Criação de cliente/lead/produto pela UI | Fora do escopo desta rodada (endpoints existem) | M |
 | Histórico de AUM e movimentações | Sem modelo de dados (gráficos marcados como demonstrativos) | M |
 | Limite FGC, custos de corretagem/come-cotas, CI/CD | Melhorias de domínio e de processo | M |
 | Teste E2E de navegador (Playwright) | Não fazia parte desta rodada | P |
@@ -312,7 +347,7 @@ UI foi validada por testes de componente e por build. Também não houve teste d
 4. Pacote LGPD: retenção, direitos do titular, re-hash de CPFs, RIPD.
 5. Observabilidade: métricas, alertas, tracing com o `requestId` já propagado; backups testados.
 6. MFA para todos os perfis e recuperação de senha.
-7. Telas de cadastro (cliente, lead, produto) e histórico de carteira (AUM/captação reais).
+7. ~~Telas de cadastro (cliente, lead, produto)~~ (feito na Rodada 2) e histórico de carteira (AUM/captação reais).
 8. Teste E2E de navegador e pentest externo antes do go-live.
 
 ### Estimativa de esforço para produção

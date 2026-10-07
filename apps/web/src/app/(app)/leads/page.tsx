@@ -26,7 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ErrorState, TableSkeleton, EmptyState } from "@/components/query-states";
-import { EmBreveButton } from "@/components/demo";
+import { ClienteFormDialog } from "@/components/forms/cliente-form-dialog";
 import { useClientes } from "@/lib/queries";
 import { usePermissoes } from "@/lib/permissoes";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -57,6 +57,7 @@ export default function LeadsPage() {
   const [perfil, setPerfil] = useState<string>(TODOS);
   const [status, setStatus] = useState<string>(TODOS);
   const [page, setPage] = useState(1);
+  const [novoAberto, setNovoAberto] = useState(false);
   const busca = useDebouncedValue(q.trim(), 300);
 
   const { data, isLoading, error, refetch, isFetching } = useClientes({
@@ -80,10 +81,10 @@ export default function LeadsPage() {
         description="Base de clientes da sua carteira — busca, filtros e acesso à ficha completa"
         actions={
           podeOperar && (
-            <EmBreveButton variant="default">
+            <Button size="sm" onClick={() => setNovoAberto(true)}>
               <Plus className="h-4 w-4" aria-hidden />
               Novo cliente
-            </EmBreveButton>
+            </Button>
           )
         }
       />
@@ -245,6 +246,12 @@ export default function LeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ClienteFormDialog
+        open={novoAberto}
+        onOpenChange={setNovoAberto}
+        onSalvo={(c) => router.push(`/clientes/${c.id}`)}
+      />
     </>
   );
 }

@@ -102,10 +102,23 @@ export type Lead = {
   responsavelId: string | null;
   responsavel: Responsavel | null;
   clienteId: string | null;
+  /** Cliente gerado pela conversão do lead, se houver */
+  cliente: { id: string; nome: string } | null;
   createdAt: string;
   updatedAt: string;
   fechadoEm: string | null;
 };
+
+export type EstagioHistorico = {
+  id: string;
+  estagio: EstagioPipeline;
+  notas: string | null;
+  criadoEm: string;
+};
+
+export type LeadDetalhado = Lead & { estagioHistorico: EstagioHistorico[] };
+
+export type ConversaoLeadResult = { lead: Lead; cliente: Cliente };
 
 export type LeadBoardColumn = {
   estagio: EstagioPipeline;
