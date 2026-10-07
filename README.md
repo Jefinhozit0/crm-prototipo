@@ -128,7 +128,9 @@ de produção), as migrações do zero num PostgreSQL real com checagem de drift
 | GET/POST | `/api/suitability` · `/questionario` · `/cliente/:id` | leitura: todos · aplicar: ADMIN, ASSESSOR |
 | POST | `/api/recomendacoes/generate` | ADMIN, ASSESSOR |
 | PATCH | `/api/recomendacoes/:id/aprovar` · `/recusar` | ADMIN, ASSESSOR |
-| GET | `/api/dashboard/resumo` · `/api/interacoes` | autenticado (escopo) |
+| GET | `/api/dashboard/resumo` · `/api/interacoes` · `/api/carteira/series` | autenticado (escopo) |
+| GET | `/api/clientes/:id/movimentacoes` | autenticado (escopo) |
+| POST | `/api/clientes/:id/movimentacoes` (aplicação/resgate; atualiza a posição na mesma transação) | ADMIN, ASSESSOR |
 | GET | `/api/auditoria` | ADMIN, COMPLIANCE |
 | GET | `/api/health/live` · `/ready` (público) · `/api/health` (ADMIN) | — |
 

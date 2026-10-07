@@ -15,6 +15,8 @@ import type {
   EstagioPipeline,
   Lead,
   LeadDetalhado,
+  Movimentacao,
+  SerieCarteira,
   Responsavel,
   GenerateResult,
   Interacao,
@@ -449,5 +451,52 @@ export function useAtualizarProduto() {
     mutationFn: ({ id, ...body }: Partial<ProdutoInput> & { id: string }) =>
       apiFetch<Produto>(`/produtos/${id}`, { method: "PATCH", body }),
     onSuccess: invalidar,
+  });
+}
+
+// ----- Carteira (movimentações e evolução) -----
+
+export type MovimentacaoInput = {
+  tipo: "APLICACAO" | "RESGATE";
+  produtoId: string;
+  valor: number;
+  /** ISO; omitido = agora */
+  data?: string;
+  observacao?: string;
+  recomendacaoId?: string;
+  cienciaDesenquadramento?: boolean;
+};
+
+export const MOVIMENTACOES_KEY = "movimentacoes" as const;
+
+export function useMovimentacoes(clienteId: string, filters: { page?: number; limit?: number } = {}) {
+  return useQuery({
+    queryKey: [MOVIMENTACOES_KEY, clienteId, filters],
+    queryFn: () =>
+      apiFetch<Page<Movimentacao>>(`/clientes/${clienteId}/movimentacoes`, { query: filters }),
+  });
+}
+
+export function useRegistrarMovimentacao(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MovimentacaoInput) =>
+      apiFetch<Movimentacao>(`/clientes/${clienteId}/movimentacoes`, { method: "POST", body }),
+    onSuccess: () => {
+      // Posição, status do cliente, recomendação (ATIVA) e dashboard mudam juntos
+      qc.invalidateQueries({ queryKey: [MOVIMENTACOES_KEY, clienteId] });
+      qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+      qc.invalidateQueries({ queryKey: ["clientes"] });
+      qc.invalidateQueries({ queryKey: [RECOMENDACOES_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["carteira"] });
+    },
+  });
+}
+
+export function useSerieCarteira(meses = 12) {
+  return useQuery({
+    queryKey: ["carteira", "series", meses],
+    queryFn: () => apiFetch<SerieCarteira>("/carteira/series", { query: { meses } }),
   });
 }

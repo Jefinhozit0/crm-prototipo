@@ -5,6 +5,7 @@ import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { AuditoriaModule } from './auditoria/auditoria.module';
+import { CarteiraModule } from './carteira/carteira.module';
 import { ClientesModule } from './clientes/clientes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { InteracoesModule } from './interacoes/interacoes.module';
@@ -28,6 +29,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     PrismaModule,
     AuditoriaModule,
     AuthModule,
+    CarteiraModule,
     ClientesModule,
     DashboardModule,
     InteracoesModule,

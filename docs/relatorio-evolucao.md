@@ -341,13 +341,59 @@ Python. **Ainda não rodou no GitHub**: isso acontece no primeiro push.
 
 **Testes**: API 138, web 67.
 
+## Rodada 4 — Movimentação e histórico de carteira (08/10/2026)
+
+Antes: não havia como registrar aplicações e resgates, os gráficos de evolução e captação do
+dashboard eram fictícios (com selo), e o KPI "AUM" somava o **patrimônio declarado** dos
+clientes — não o que está aplicado na casa.
+
+**Modelo**
+- Tabela `movimentacoes` (SALDO_INICIAL, APLICACAO, RESGATE). Invariante: **posição = soma das
+  movimentações** do par cliente/produto. A posição nunca é editada direto.
+- A migração `20261008120000_movimentacoes` cria um SALDO_INICIAL para cada posição existente
+  (id determinístico, não duplica) e um CHECK `valor > 0`. Não altera nenhuma posição.
+- **Valores a custo**: o sistema não tem cotações, então não há marcação a mercado. As telas
+  dizem isso explicitamente.
+
+**Regras (API)**
+- Aplicação e resgate atualizam a posição na mesma transação, com auditoria.
+- Resgate é condicional e atômico: nunca deixa a posição negativa, mesmo com requisições
+  simultâneas. Resgate total encerra a posição.
+- Data retroativa permitida, futura não.
+- Cliente BLOQUEADO não movimenta; INATIVO só resgata; produto desativado não recebe aplicação.
+- **Desenquadramento (CVM 30)**: aplicação sem suitability, com suitability vencida ou em
+  produto acima do perfil exige a ciência registrada do cliente; a movimentação fica marcada e
+  o motivo vai para a auditoria. *Precisa de validação de compliance* (texto da ciência e se
+  deve exigir um termo formal).
+- Aplicação vinculada a recomendação **aprovada** a marca como **ATIVA** (uma única vez): fecha o
+  ciclo recomendação → execução, e o status ATIVA (que existia e nunca era usado) passa a valer.
+- A primeira aplicação de um PROSPECTO o torna ATIVO (auditado).
+- `GET /carteira/series`: patrimônio aplicado ao fim de cada mês e captação (aplicações e
+  resgates; saldo inicial não conta como captação), no escopo do usuário, meses no fuso de São
+  Paulo. Calculado a partir das movimentações — trocar por snapshots mensais quando o volume crescer.
+- Dashboard: **AUM = soma das posições**; o patrimônio declarado aparece separado.
+
+**Web**
+- Ficha do cliente: "Registrar movimentação" (aplicação/resgate, valor em pt-BR, data, saldo
+  disponível no resgate, aviso de desenquadramento com a regra explicada e checkbox de ciência),
+  extrato paginado e "Registrar aplicação" direto nas recomendações aprovadas.
+- Dashboard: séries reais, tabela com os mesmos números para leitura sem gráfico, e cores de
+  aplicações × resgates trocadas (o verde × vermelho anterior falhava para daltonismo deutan; o
+  par novo foi validado). Os dados demonstrativos foram removidos do código.
+- Seed: histórico de 12 meses que soma exatamente cada posição.
+
+**Validação**: API 146 testes, web 74. Em PostgreSQL real: backfill da migração, CHECK, ausência
+de drift, invariante do seed (39 movimentações), AUM e série batendo com o banco, e **6 resgates
+simultâneos de 30% do saldo → 3 aceitos, 3 recusados, saldo nunca negativo**, invariante mantida
+(13 de 13). Teste de fumaça geral: 31 de 31.
+
 ## Pendências
 
 | Pendência | Motivo de não ter sido feita | Esforço |
 |---|---|---|
 | Rate limit e revogação em store compartilhado (Redis) | Infra; hoje vale por instância | P |
 | Re-hash de CPFs legados (SHA-256 puro) | Precisa do CPF em claro, que o sistema não guarda; requer recadastro ou importação da fonte | M |
-| Histórico de AUM e movimentações | Sem modelo de dados (gráficos marcados como demonstrativos) | M |
+| Marcação a mercado (cotações) e rentabilidade da carteira | Precisa de fonte de preços; hoje tudo é a custo (Rodada 4) | M |
 | Limite FGC, custos de corretagem/come-cotas | Melhorias de domínio | M |
 | CD (deploy automatizado) e ambiente de homologação | CI existe (Rodada 3); falta a infraestrutura de destino | M |
 | Teste E2E de navegador (Playwright) | Não fazia parte desta rodada | P |
@@ -378,7 +424,7 @@ Python. **Ainda não rodou no GitHub**: isso acontece no primeiro push.
 4. Pacote LGPD: retenção, direitos do titular, re-hash de CPFs, RIPD.
 5. Observabilidade: métricas, alertas, tracing com o `requestId` já propagado; backups testados.
 6. MFA para todos os perfis e recuperação de senha.
-7. ~~Telas de cadastro (cliente, lead, produto)~~ (feito na Rodada 2) e histórico de carteira (AUM/captação reais).
+7. ~~Telas de cadastro (cliente, lead, produto)~~ (Rodada 2) e ~~histórico de carteira (AUM/captação reais)~~ (Rodada 4, a custo).
 8. Teste E2E de navegador e pentest externo antes do go-live.
 
 ### Estimativa de esforço para produção

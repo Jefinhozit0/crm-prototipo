@@ -43,6 +43,7 @@ model User {
   auditoria     Auditoria[]
   suitabilities Suitability[]  @relation("SuitabilityAplicador")
   refreshTokens RefreshToken[]
+  movimentacoes Movimentacao[] @relation("MovimentacaoRegistradaPor")
 
   // email já é @unique (índice implícito) — o @@index([email]) antigo era redundante
   @@map("users")
@@ -52,12 +53,12 @@ model User {
 // revogação no logout e detecção de reuso (token roubado reapresentado).
 // familiaId agrupa a cadeia de rotações de uma mesma sessão de login.
 model RefreshToken {
-  id         String    @id // jti do JWT
-  userId     String
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  familiaId  String
-  expiraEm   DateTime
-  revogadoEm DateTime?
+  id             String    @id // jti do JWT
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familiaId      String
+  expiraEm       DateTime
+  revogadoEm     DateTime?
   // jti que substituiu este na rotação (null = ainda é o token vigente da família)
   substituidoPor String?
 
@@ -116,6 +117,7 @@ model Cliente {
   interacoes    Interacao[]
   posicoes      Posicao[]
   leadOrigem    Lead? // lead que foi convertido neste cliente, se houver
+  movimentacoes Movimentacao[]
 
   @@index([responsavelId, status])
   @@index([perfil])
@@ -132,13 +134,51 @@ model Posicao {
   produto   Produto @relation(fields: [produtoId], references: [id])
   valor     Decimal @db.Decimal(18, 2)
 
-  adquiridoEm DateTime @default(now())
+  adquiridoEm  DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
   @@unique([clienteId, produtoId])
   @@index([produtoId])
   // (clienteId já é coberto pelo prefixo do @@unique acima)
   @@map("posicoes")
+}
+
+// Movimentações da carteira: a posição é sempre a soma das movimentações do
+// par cliente/produto (SALDO_INICIAL + APLICACAO − RESGATE). Valores a custo:
+// o sistema não tem cotações, então não há marcação a mercado.
+enum TipoMovimentacao {
+  SALDO_INICIAL // posição que já existia antes do registro de movimentações
+  APLICACAO
+  RESGATE
+}
+
+model Movimentacao {
+  id         String           @id @default(cuid())
+  clienteId  String
+  cliente    Cliente          @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  produtoId  String
+  produto    Produto          @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+  tipo       TipoMovimentacao
+  valor      Decimal          @db.Decimal(18, 2) // sempre positivo; o tipo dá o sinal
+  data       DateTime // data da operação (pode ser retroativa, nunca futura)
+  observacao String?
+
+  // Aplicação acima do perfil ou sem suitability válida, feita com ciência
+  // registrada do cliente (CVM 30)
+  desenquadrada Boolean @default(false)
+
+  // Execução de uma recomendação aprovada (a recomendação passa a ATIVA)
+  recomendacaoId String?
+  recomendacao   Recomendacao? @relation(fields: [recomendacaoId], references: [id], onDelete: Restrict)
+
+  registradoPorId String?
+  registradoPor   User?    @relation("MovimentacaoRegistradaPor", fields: [registradoPorId], references: [id])
+  criadoEm        DateTime @default(now())
+
+  @@index([clienteId, data])
+  @@index([data])
+  @@index([produtoId])
+  @@map("movimentacoes")
 }
 
 // ============================================================
@@ -236,6 +276,7 @@ model Produto {
 
   recomendacoes Recomendacao[]
   posicoes      Posicao[]
+  movimentacoes Movimentacao[]
 
   @@index([categoria, ativo])
   @@index([perfilMinimo])
@@ -304,6 +345,8 @@ model Recomendacao {
 
   geradoEm DateTime  @default(now())
   expiraEm DateTime?
+
+  movimentacoes Movimentacao[]
 
   @@index([clienteId, status])
   @@index([status, geradoEm])

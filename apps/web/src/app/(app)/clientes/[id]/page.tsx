@@ -7,6 +7,7 @@ import {
   FileCheck2,
   Mail,
   MapPin,
+  ArrowLeftRight,
   Pencil,
   Phone,
   Power,
@@ -29,6 +30,8 @@ import { ErrorState } from "@/components/query-states";
 import { ThinkingDialog } from "@/components/thinking-dialog";
 import { RecomendacaoDetalheDialog } from "@/components/recomendacao-detalhe-dialog";
 import { ClienteFormDialog } from "@/components/forms/cliente-form-dialog";
+import { MovimentacaoDialog, type MovimentacaoInicial } from "@/components/forms/movimentacao-dialog";
+import { MovimentacoesRecentes } from "@/components/movimentacoes-recentes";
 import { ConfirmarDialog } from "@/components/confirmar-dialog";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
@@ -89,6 +92,7 @@ export default function ClienteDetalhePage({
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [editando, setEditando] = useState(false);
   const [confirmandoStatus, setConfirmandoStatus] = useState(false);
+  const [movimentando, setMovimentando] = useState<MovimentacaoInicial | null>(null);
   const inativar = useInativarCliente();
   const atualizar = useAtualizarCliente(id);
   const [recomendacaoDetalheId, setRecomendacaoDetalheId] = useState<string | null>(null);
@@ -145,6 +149,7 @@ export default function ClienteDetalhePage({
 
   const pendentes = cliente.recomendacoes.filter((r) => r.status === "PENDENTE");
   const inativo = cliente.status === "INATIVO";
+  const podeMovimentar = podeOperar && cliente.status !== "BLOQUEADO";
 
   async function alternarStatus() {
     try {
@@ -282,14 +287,24 @@ export default function ClienteDetalhePage({
         {/* Carteira */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Wallet className="h-4 w-4" />
-              Carteira atual
-            </CardTitle>
-            <CardDescription>
-              {cliente.posicoes.length} posições · {fmt.brl(totalAlocado)} alocado
-              {naoAlocado > 0 && ` · ${fmt.brl(naoAlocado)} disponível`}
-            </CardDescription>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Wallet className="h-4 w-4" />
+                  Carteira atual
+                </CardTitle>
+                <CardDescription>
+                  {cliente.posicoes.length} posições · {fmt.brl(totalAlocado)} alocado
+                  {naoAlocado > 0 && ` · ${fmt.brl(naoAlocado)} disponível`}
+                </CardDescription>
+              </div>
+              {podeMovimentar && (
+                <Button size="sm" variant="outline" onClick={() => setMovimentando({})}>
+                  <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden />
+                  Registrar movimentação
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {cliente.posicoes.length === 0 && (
@@ -476,6 +491,8 @@ export default function ClienteDetalhePage({
         </Card>
       </div>
 
+      <MovimentacoesRecentes clienteId={id} />
+
       {/* Recomendações */}
       <Card className="mt-4">
         <CardHeader>
@@ -507,40 +524,54 @@ export default function ClienteDetalhePage({
             <div className="space-y-2">
               {cliente.recomendacoes.map((r) => {
                 const scorePct = Math.round(r.score * 100);
+                const executavel = r.status === "APROVADA" && podeMovimentar && !inativo;
                 return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => setRecomendacaoDetalheId(r.id)}
-                    className="w-full text-left flex items-center gap-3 p-3 rounded-md border border-border hover:bg-muted/40 hover:border-primary/30 transition-all cursor-pointer"
-                  >
-                    <div className="w-14 text-center shrink-0">
-                      <p className="text-lg font-semibold tabular-nums">
-                        {scorePct}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">/100</p>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">
-                        {r.produto.nome}{" "}
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] ml-1 font-normal"
-                        >
-                          {categoriaLabel[r.produto.categoria]}
-                        </Badge>
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {r.justificativa}
-                      </p>
-                    </div>
-                    <Badge
-                      variant={statusBadgeVariant[r.status]}
-                      className="shrink-0 text-xs"
+                  <div key={r.id} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <button
+                      type="button"
+                      onClick={() => setRecomendacaoDetalheId(r.id)}
+                      className="w-full text-left flex items-center gap-3 p-3 rounded-md border border-border hover:bg-muted/40 hover:border-primary/30 transition-all cursor-pointer"
                     >
-                      {statusRecomendacaoLabel[r.status]}
-                    </Badge>
-                  </button>
+                      <div className="w-14 text-center shrink-0">
+                        <p className="text-lg font-semibold tabular-nums">
+                          {scorePct}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">/100</p>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">
+                          {r.produto.nome}{" "}
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] ml-1 font-normal"
+                          >
+                            {categoriaLabel[r.produto.categoria]}
+                          </Badge>
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {r.justificativa}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={statusBadgeVariant[r.status]}
+                        className="shrink-0 text-xs"
+                      >
+                        {statusRecomendacaoLabel[r.status]}
+                      </Badge>
+                    </button>
+                    {executavel && (
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() =>
+                          setMovimentando({ tipo: "APLICACAO", produtoId: r.produto.id, recomendacaoId: r.id })
+                        }
+                        aria-label={`Registrar aplicação em ${r.produto.nome}`}
+                      >
+                        Registrar aplicação
+                      </Button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -558,6 +589,13 @@ export default function ClienteDetalhePage({
         }}
         open={thinkingOpen}
         onOpenChange={setThinkingOpen}
+      />
+
+      <MovimentacaoDialog
+        cliente={cliente}
+        open={!!movimentando}
+        onOpenChange={(v) => !v && setMovimentando(null)}
+        inicial={movimentando ?? undefined}
       />
 
       <ClienteFormDialog open={editando} onOpenChange={setEditando} cliente={cliente} />

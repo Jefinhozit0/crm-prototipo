@@ -266,7 +266,10 @@ export type Recomendacao = {
 // ----- Dashboard -----
 
 export type DashboardResumo = {
+  /** Soma das posições (o que está aplicado na casa), a valor de custo */
   aumTotal: number;
+  /** Patrimônio declarado pelos clientes ativos (inclui o que está fora da casa) */
+  patrimonioDeclarado: number;
   clientesAtivos: number;
   leadsAbertos: number;
   valorPipeline: number;
@@ -295,4 +298,37 @@ export type GenerateResult = {
   totalAnalisados: number;
   descartados: DescarteAgregado[];
   engineVersion: string;
+};
+
+// ----- Carteira -----
+
+export type TipoMovimentacao = "SALDO_INICIAL" | "APLICACAO" | "RESGATE";
+
+export type Movimentacao = {
+  id: string;
+  clienteId: string;
+  produtoId: string;
+  produto: { id: string; nome: string; categoria: CategoriaProduto; emissor: string };
+  tipo: TipoMovimentacao;
+  valor: number;
+  data: string;
+  observacao: string | null;
+  /** Aplicação acima do perfil / sem suitability válida, com ciência do cliente */
+  desenquadrada: boolean;
+  recomendacaoId: string | null;
+  registradoPor: { id: string; nome: string } | null;
+  criadoEm: string;
+};
+
+export type SerieCarteira = {
+  /** Valores a custo: o sistema não tem cotações (sem marcação a mercado) */
+  base: "custo";
+  meses: Array<{
+    /** "2026-10" */
+    mes: string;
+    patrimonioAplicado: number;
+    entradas: number;
+    saidas: number;
+    captacaoLiquida: number;
+  }>;
 };
