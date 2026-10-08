@@ -19,8 +19,14 @@ export class DashboardService {
     const clientes = escopoCliente(user);
     const agora = new Date();
 
-    const [aum, clientesAtivos, porPerfil, leadsAbertos, pendentes, ativosComSuit] =
+    const [aum, declarado, clientesAtivos, porPerfil, leadsAbertos, pendentes, ativosComSuit] =
       await Promise.all([
+        // AUM = o que está aplicado na casa (posições, a custo), de qualquer status
+        this.prisma.posicao.aggregate({
+          where: { cliente: clientes },
+          _sum: { valor: true },
+        }),
+        // Patrimônio declarado pelos clientes ativos (inclui o que está fora da casa)
         this.prisma.cliente.aggregate({
           where: { ...clientes, status: 'ATIVO' },
           _sum: { patrimonio: true },
@@ -56,7 +62,8 @@ export class DashboardService {
     const totalPerfil = porPerfil.reduce((acc, p) => acc + p._count._all, 0);
 
     return {
-      aumTotal: Number(aum._sum.patrimonio?.toString() ?? 0),
+      aumTotal: Number(aum._sum.valor?.toString() ?? 0),
+      patrimonioDeclarado: Number(declarado._sum.patrimonio?.toString() ?? 0),
       clientesAtivos,
       leadsAbertos: leadsAbertos._count._all,
       valorPipeline: Number(leadsAbertos._sum.valorEstimado?.toString() ?? 0),

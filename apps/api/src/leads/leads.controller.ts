@@ -19,11 +19,13 @@ import { CurrentUser, type AuthUser } from '../auth/decorators/current-user.deco
 import { Roles } from '../auth/decorators/roles.decorator';
 import { LeadsService } from './leads.service';
 import {
+  converterLeadSchema,
   leadBoardQuerySchema,
   leadCreateSchema,
   leadQuerySchema,
   leadUpdateSchema,
   moverEstagioSchema,
+  type ConverterLeadDto,
   type LeadBoardQueryDto,
   type LeadCreateDto,
   type LeadQueryDto,
@@ -88,6 +90,19 @@ export class LeadsController {
     @Req() req: Request,
   ) {
     return this.service.moverEstagio(user, id, body, contextoDaRequisicao(req));
+  }
+
+  /** Converte em cliente (cria o cliente e fecha o lead na mesma transação) */
+  @Post(':id/converter')
+  @Roles('ADMIN', 'ASSESSOR')
+  @HttpCode(HttpStatus.CREATED)
+  converter(
+    @CurrentUser() user: AuthUser,
+    @Param('id', IdParamPipe) id: string,
+    @Body(new ZodValidationPipe(converterLeadSchema)) body: ConverterLeadDto,
+    @Req() req: Request,
+  ) {
+    return this.service.converter(user, id, body, contextoDaRequisicao(req));
   }
 
   @Delete(':id')

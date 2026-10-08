@@ -5,6 +5,7 @@ import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { AuditoriaModule } from './auditoria/auditoria.module';
+import { CarteiraModule } from './carteira/carteira.module';
 import { ClientesModule } from './clientes/clientes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { InteracoesModule } from './interacoes/interacoes.module';
@@ -12,6 +13,7 @@ import { LeadsModule } from './leads/leads.module';
 import { ProdutosModule } from './produtos/produtos.module';
 import { RecomendacoesModule } from './recomendacoes/recomendacoes.module';
 import { SuitabilityModule } from './suitability/suitability.module';
+import { UsuariosModule } from './usuarios/usuarios.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -27,6 +29,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     PrismaModule,
     AuditoriaModule,
     AuthModule,
+    CarteiraModule,
     ClientesModule,
     DashboardModule,
     InteracoesModule,
@@ -34,6 +37,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ProdutosModule,
     RecomendacoesModule,
     SuitabilityModule,
+    UsuariosModule,
   ],
   controllers: [HealthController],
   providers: [

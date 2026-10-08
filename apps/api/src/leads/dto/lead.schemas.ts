@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EstagioPipeline } from '@prisma/client';
 import { paginationSchema } from '../../common/pagination';
+import { clienteCreateSchema } from '../../clientes/dto/cliente.schemas';
 
 export const leadCreateSchema = z.object({
   nome: z.string().trim().min(2).max(120),
@@ -37,8 +38,17 @@ export const moverEstagioSchema = z.object({
   notas: z.string().max(500).optional(),
 });
 
+// Conversão em cliente: mesmas regras do cadastro de cliente (CPF com dígito
+// verificador, UF). Nome e e-mail vêm do lead quando omitidos; patrimônio, do
+// valor estimado. Responsável é o do lead; perfil e status são os iniciais.
+export const converterLeadSchema = clienteCreateSchema
+  .omit({ responsavelId: true, perfil: true, status: true })
+  .partial({ nome: true, email: true, patrimonio: true })
+  .strict();
+
 export type LeadCreateDto = z.infer<typeof leadCreateSchema>;
 export type LeadUpdateDto = z.infer<typeof leadUpdateSchema>;
 export type LeadQueryDto = z.infer<typeof leadQuerySchema>;
 export type LeadBoardQueryDto = z.infer<typeof leadBoardQuerySchema>;
 export type MoverEstagioDto = z.infer<typeof moverEstagioSchema>;
+export type ConverterLeadDto = z.infer<typeof converterLeadSchema>;

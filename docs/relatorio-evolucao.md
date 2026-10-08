@@ -82,13 +82,13 @@ Esforço: P (< 1 dia), M (1–3 dias), G (> 3 dias). "Status" indica o que foi f
 | 28 | Médio | `ai-engine` | Score de ML sem limite [0,1]; origem do score não chegava à auditoria; yield comparado com produtos inativos | — | `clamp`, `scoreFonte`/`scoreRegras`, só ativos | P | ✅ |
 | 29 | Médio | `apps/api/src/recomendacoes/ia/` | Motor TS morto e divergente do Python | Migração incompleta | Removido (justificativa abaixo) | P | ✅ |
 | 30 | Médio | CSRF | Só SameSite=Lax | — | Checagem de `Origin` em métodos de escrita | P | ✅ |
-| 31 | Médio | deps Nest 10 | 8 vulnerabilidades de produção (multer, body-parser, lodash, @nestjs/core) | Correção só em Nest 11+ | Migração separada | G | ⏳ |
+| 31 | Médio | deps Nest 10 | 8 vulnerabilidades de produção (multer, body-parser, lodash, @nestjs/core) | Correção só em Nest 11+ | Migrado para Nest 11 (ver Rodada 3) | G | ✅ |
 | 32 | Baixo | web | Busca dispara request a cada tecla; lista "pisca" | — | Debounce + `keepPreviousData` | P | ✅ |
 | 33 | Baixo | web | Barra de alocação com `Infinity%` quando patrimônio = 0 | — | Base protegida | P | ✅ |
 | 34 | Baixo | motor | Textos "1 anos", markdown `**` dentro da frase, "você já tem" | — | Corrigidos | P | ✅ |
 | 35 | Baixo | logout web | Falha na API de logout virava rejeição não tratada | `try/finally` sem `catch` | Corrigido (achado pelo teste) | P | ✅ |
 | 36 | Baixo | Python | `requirements.txt` sem teto de versão (pandas 3 já instalava) | — | Faixas até a próxima major | P | ✅ |
-| 37 | Melhoria | `Lead.clienteId` | Sem FK para `clientes`; coluna `clienteIdUnique` sem uso | — | FK com limpeza de órfãos (exige revisão dos dados reais) | P | ⏳ |
+| 37 | Melhoria | `Lead.clienteId` | Sem FK para `clientes`; coluna `clienteIdUnique` sem uso | — | FK única; a migração aborta se houver órfãos (ver Rodada 2) | P | ✅ |
 | 38 | Melhoria | domínio | FGC (R$ 250 mil por CPF/instituição) não é considerado | — | Regra de limite FGC para CDB/LCI/LCA | M | ⏳ |
 
 ## Alterações realizadas
@@ -273,17 +273,129 @@ Resultado final: `npm run lint` ✅ · `npm run typecheck` ✅ · `npm run build
 **Não testado**: o front rodando contra a API real no navegador (`next start` + proxy); a
 UI foi validada por testes de componente e por build. Também não houve teste de carga.
 
+## Rodada 2 — Cadastros pela UI (07/10/2026)
+
+Os endpoints de escrita existiam, mas a UI só tinha botões "em breve". Agora o fluxo comercial
+fecha de ponta a ponta na tela: oportunidade → funil → cliente → suitability → recomendação.
+
+**Web**
+- Cliente: cadastro (em Leads & Clientes) e edição (na ficha); ADMIN inativa/reativa com
+  confirmação. CPF validado no navegador com o mesmo algoritmo da API.
+- Pipeline: "Nova oportunidade"; cada card abre a ficha (dados, histórico do funil, mover de
+  estágio com nota, editar, excluir, converter em cliente).
+- Catálogo (ADMIN): novo produto, edição, desativar (com confirmação) e reativar; filtro
+  "Mostrar inativos".
+- Formulários: valores em pt-BR ("1.500.000,00"), erros de validação da API levados ao campo
+  certo (incluindo CPF duplicado), edição envia só os campos alterados (a auditoria registra
+  exatamente o que mudou), ADMIN escolhe o assessor responsável.
+
+**API**
+- `POST /leads/:id/converter`: cria o cliente (mesmas regras do cadastro) e fecha o lead
+  numa única transação; herda nome, e-mail, telefone, valor e responsável do lead; recusa
+  lead já convertido (409), perdido (422) ou sem e-mail (422). Lead convertido não muda de
+  estágio nem é excluído (é a origem registrada do cliente).
+- `GET /usuarios/assessores` (ADMIN) para a escolha do responsável.
+- **Correção de autorização**: assessor conseguia inativar cliente por `PATCH {status:
+  "INATIVO"}`, contornando a regra de que só ADMIN inativa. Agora entrar ou sair de INATIVO
+  exige ADMIN.
+- Migração `20261007120000_lead_cliente_fk`: `leads.clienteId` vira FK única e
+  `clienteIdUnique` (nunca usada) sai. **Não corrige dados**: se houver lead órfão, dois
+  leads no mesmo cliente ou marcador divergente, aborta com a contagem para revisão humana.
+  Validada em PostgreSQL real (encoding UTF8 e WIN1252): aborta com órfão, aplica após a
+  correção, e o banco resultante bate com o `schema.prisma`.
+
+**Testes**: API 137 (antes 131), web 67 (antes 38). Lint, typecheck e build passam.
+
+**Limitações conhecidas**: campos opcionais (telefone, cidade, ticker, descrição) não podem ser
+*apagados* pela edição, só alterados (a API não aceita `null` neles); o cliente novo nasce
+com perfil "Moderado" até a suitability ser aplicada (comportamento anterior, mantido).
+
+## Rodada 3 — NestJS 11 e CI (07/10/2026)
+
+**NestJS 10 → 11.2.7** (`@nestjs/config` 4.0.4, `@nestjs/jwt` 11, CLI 11; Express 4 → 5).
+Escolhi a 11 e não a 12: a 11 já traz o `multer` corrigido e o `@nestjs/config` fora da faixa
+vulnerável, e pular duas majors não trazia ganho de segurança.
+
+- **Vulnerabilidades em dependências de produção: 8 → 0.** Total com ferramentas de dev:
+  48 (início do projeto) → 25, todas em CLI/Jest/ESLint, fora do runtime.
+- Nenhuma mudança de código foi necessária para o Express 5: não há rotas curinga e todas
+  as queries são planas (o parser novo não muda nada). A instalação deixou duas cópias do
+  `@nestjs/common` (10 e 11), o que quebraria a injeção de dependência em runtime; o lock
+  foi regenerado para uma cópia só.
+- **Bug corrigido (anterior à migração)**: corpo acima do limite de 100 KB respondia **500**
+  e era logado como falha do servidor. Os erros 4xx do body-parser agora mantêm o status
+  (413, 400, 415) com mensagem em pt-BR. Teste e2e adicionado.
+- **Teste de fumaça da API compilada** contra PostgreSQL real (migrações + seed), 31 de 31
+  passos: boot recusado em produção com segredo fraco, health, login/cookies, queries
+  (inválidas, repetidas, aninhadas), 404, 400, 413, CSRF, X-Request-Id, Helmet, conversão
+  de lead com FK real, 422 sem suitability, auditoria sem CPF, logout.
+
+**CI** (`.github/workflows/ci.yml`), em PRs e push na `main`:
+- Node 24: `npm ci`, lint, typecheck, testes, build e `npm audit --omit=dev --audit-level=high`.
+- PostgreSQL 16 real: migrações do zero, checagem de drift contra o `schema.prisma` e seed.
+- Python 3.12: pytest do motor.
+
+O workflow foi reproduzido localmente (instalação limpa, lint, typecheck, testes, build,
+audit, migrações e seed em Postgres real), exceto o pytest, porque esta máquina não tem
+Python. **Ainda não rodou no GitHub**: isso acontece no primeiro push.
+
+**Testes**: API 138, web 67.
+
+## Rodada 4 — Movimentação e histórico de carteira (08/10/2026)
+
+Antes: não havia como registrar aplicações e resgates, os gráficos de evolução e captação do
+dashboard eram fictícios (com selo), e o KPI "AUM" somava o **patrimônio declarado** dos
+clientes — não o que está aplicado na casa.
+
+**Modelo**
+- Tabela `movimentacoes` (SALDO_INICIAL, APLICACAO, RESGATE). Invariante: **posição = soma das
+  movimentações** do par cliente/produto. A posição nunca é editada direto.
+- A migração `20261008120000_movimentacoes` cria um SALDO_INICIAL para cada posição existente
+  (id determinístico, não duplica) e um CHECK `valor > 0`. Não altera nenhuma posição.
+- **Valores a custo**: o sistema não tem cotações, então não há marcação a mercado. As telas
+  dizem isso explicitamente.
+
+**Regras (API)**
+- Aplicação e resgate atualizam a posição na mesma transação, com auditoria.
+- Resgate é condicional e atômico: nunca deixa a posição negativa, mesmo com requisições
+  simultâneas. Resgate total encerra a posição.
+- Data retroativa permitida, futura não.
+- Cliente BLOQUEADO não movimenta; INATIVO só resgata; produto desativado não recebe aplicação.
+- **Desenquadramento (CVM 30)**: aplicação sem suitability, com suitability vencida ou em
+  produto acima do perfil exige a ciência registrada do cliente; a movimentação fica marcada e
+  o motivo vai para a auditoria. *Precisa de validação de compliance* (texto da ciência e se
+  deve exigir um termo formal).
+- Aplicação vinculada a recomendação **aprovada** a marca como **ATIVA** (uma única vez): fecha o
+  ciclo recomendação → execução, e o status ATIVA (que existia e nunca era usado) passa a valer.
+- A primeira aplicação de um PROSPECTO o torna ATIVO (auditado).
+- `GET /carteira/series`: patrimônio aplicado ao fim de cada mês e captação (aplicações e
+  resgates; saldo inicial não conta como captação), no escopo do usuário, meses no fuso de São
+  Paulo. Calculado a partir das movimentações — trocar por snapshots mensais quando o volume crescer.
+- Dashboard: **AUM = soma das posições**; o patrimônio declarado aparece separado.
+
+**Web**
+- Ficha do cliente: "Registrar movimentação" (aplicação/resgate, valor em pt-BR, data, saldo
+  disponível no resgate, aviso de desenquadramento com a regra explicada e checkbox de ciência),
+  extrato paginado e "Registrar aplicação" direto nas recomendações aprovadas.
+- Dashboard: séries reais, tabela com os mesmos números para leitura sem gráfico, e cores de
+  aplicações × resgates trocadas (o verde × vermelho anterior falhava para daltonismo deutan; o
+  par novo foi validado). Os dados demonstrativos foram removidos do código.
+- Seed: histórico de 12 meses que soma exatamente cada posição.
+
+**Validação**: API 146 testes, web 74. Em PostgreSQL real: backfill da migração, CHECK, ausência
+de drift, invariante do seed (39 movimentações), AUM e série batendo com o banco, e **6 resgates
+simultâneos de 30% do saldo → 3 aceitos, 3 recusados, saldo nunca negativo**, invariante mantida
+(13 de 13). Teste de fumaça geral: 31 de 31.
+
 ## Pendências
 
 | Pendência | Motivo de não ter sido feita | Esforço |
 |---|---|---|
-| Migrar NestJS 10 → 11 (fecha as 8 vulnerabilidades de produção) | Major version; exige revisão de breaking changes (Express 5, rotas) | M |
 | Rate limit e revogação em store compartilhado (Redis) | Infra; hoje vale por instância | P |
 | Re-hash de CPFs legados (SHA-256 puro) | Precisa do CPF em claro, que o sistema não guarda; requer recadastro ou importação da fonte | M |
-| FK `leads.clienteId` e conversão lead → cliente | Exige olhar os dados reais antes de limpar órfãos | P |
-| Criação de cliente/lead/produto pela UI | Fora do escopo desta rodada (endpoints existem) | M |
-| Histórico de AUM e movimentações | Sem modelo de dados (gráficos marcados como demonstrativos) | M |
-| Limite FGC, custos de corretagem/come-cotas, CI/CD | Melhorias de domínio e de processo | M |
+| Marcação a mercado (cotações) e rentabilidade da carteira | Precisa de fonte de preços; hoje tudo é a custo (Rodada 4) | M |
+| Limite FGC, custos de corretagem/come-cotas | Melhorias de domínio | M |
+| CD (deploy automatizado) e ambiente de homologação | CI existe (Rodada 3); falta a infraestrutura de destino | M |
 | Teste E2E de navegador (Playwright) | Não fazia parte desta rodada | P |
 | Prisma 5 → 6/7, TypeScript 7, ESLint 10 | Majors; sem necessidade imediata | M |
 
@@ -298,8 +410,8 @@ UI foi validada por testes de componente e por build. Também não houve teste d
 3. **Modelo de ML**: treinado em dados sintéticos. Usar só depois de treinar com decisões
    reais, validar e monitorar viés; até lá, rodar só com regras.
 4. **Segurança**: sem MFA, sem recuperação de senha, sem pentest, rate limit em memória,
-   Nest 10 com vulnerabilidades conhecidas (mitigadas, não corrigidas).
-5. **Operação**: sem CI/CD, sem backups e restore testados, sem métricas/alertas/tracing
+   ~~Nest 10 com vulnerabilidades conhecidas~~ (Rodada 3: Nest 11, 0 vulnerabilidades de produção).
+5. **Operação**: CI existe (Rodada 3), mas sem CD, sem backups e restore testados, sem métricas/alertas/tracing
    (só logs estruturados e health checks), sem ambiente de homologação.
 6. **Integrações**: não há integração com custódia, plataforma de ordens nem cadastro
    oficial; carteira e catálogo são dados de demonstração.
@@ -307,12 +419,12 @@ UI foi validada por testes de componente e por build. Também não houve teste d
 ## Próximos passos
 
 1. Revisão de compliance das regras de suitability e do motor (bloqueante).
-2. CI (lint, typecheck, build, testes, `npm audit --omit=dev`, pytest) + ambiente de homologação.
-3. Migração NestJS 11 e store compartilhado (Redis) para rate limit.
+2. ~~CI (lint, typecheck, build, testes, `npm audit --omit=dev`, pytest)~~ (Rodada 3) + ambiente de homologação.
+3. ~~Migração NestJS 11~~ (Rodada 3) e store compartilhado (Redis) para rate limit.
 4. Pacote LGPD: retenção, direitos do titular, re-hash de CPFs, RIPD.
 5. Observabilidade: métricas, alertas, tracing com o `requestId` já propagado; backups testados.
 6. MFA para todos os perfis e recuperação de senha.
-7. Telas de cadastro (cliente, lead, produto) e histórico de carteira (AUM/captação reais).
+7. ~~Telas de cadastro (cliente, lead, produto)~~ (Rodada 2) e ~~histórico de carteira (AUM/captação reais)~~ (Rodada 4, a custo).
 8. Teste E2E de navegador e pentest externo antes do go-live.
 
 ### Estimativa de esforço para produção

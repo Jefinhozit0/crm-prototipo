@@ -25,8 +25,18 @@ const RELACOES: Record<string, Record<string, Rel>> = {
   },
   refreshToken: { user: ['one', 'user', 'userId'] },
   auditoria: { user: ['one', 'user', 'userId'] },
-  lead: { responsavel: ['one', 'user', 'responsavelId'], estagioHistorico: ['many', 'estagioHistorico', 'leadId'] },
+  lead: {
+    responsavel: ['one', 'user', 'responsavelId'],
+    cliente: ['one', 'cliente', 'clienteId'],
+    estagioHistorico: ['many', 'estagioHistorico', 'leadId'],
+  },
   interacao: { cliente: ['one', 'cliente', 'clienteId'], autor: ['one', 'user', 'autorId'] },
+  movimentacao: {
+    cliente: ['one', 'cliente', 'clienteId'],
+    produto: ['one', 'produto', 'produtoId'],
+    registradoPor: ['one', 'user', 'registradoPorId'],
+    recomendacao: ['one', 'recomendacao', 'recomendacaoId'],
+  },
 };
 
 const DECIMAIS = new Set(['patrimonio', 'valor', 'score', 'rentabilidadeAno', 'taxaAdmin', 'taxaPerformance', 'valorEstimado']);
@@ -46,6 +56,8 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
   produto: () => ({ ativo: true, tributacao: 'TRIBUTADO', taxaAdmin: null, taxaPerformance: null, ticker: null, descricao: null }),
   lead: () => ({ estagio: 'PROSPECCAO', email: null, telefone: null, observacoes: null, responsavelId: null, clienteId: null, fechadoEm: null }),
   estagioHistorico: () => ({ notas: null, criadoEm: new Date() }),
+  posicao: () => ({ adquiridoEm: new Date(), atualizadoEm: new Date() }),
+  movimentacao: () => ({ observacao: null, desenquadrada: false, recomendacaoId: null, registradoPorId: null, criadoEm: new Date() }),
 };
 
 export function novoId() {
@@ -65,6 +77,7 @@ export class FakePrisma {
   readonly lead = this.tabela('lead');
   readonly estagioHistorico = this.tabela('estagioHistorico');
   readonly interacao = this.tabela('interacao');
+  readonly movimentacao = this.tabela('movimentacao');
 
   async $transaction<T>(fn: (tx: FakePrisma) => Promise<T>): Promise<T> {
     // Snapshot raso pra simular rollback quando a transação lança
@@ -116,13 +129,24 @@ export class FakePrisma {
       update: async (a: Args) => {
         const r = filtrar(a.where)[0];
         if (!r) throw new Prisma.PrismaClientKnownRequestError('não encontrado', { code: 'P2025', clientVersion: 'fake' });
-        Object.assign(r, db.normalizar(a.data!), { updatedAt: new Date() });
+        Object.assign(r, db.aplicar(r, a.data!), { updatedAt: new Date() });
         return db.projetar(nome, r, a);
       },
       updateMany: async (a: Args) => {
         const alvo = filtrar(a.where);
-        for (const r of alvo) Object.assign(r, db.normalizar(a.data!));
+        for (const r of alvo) Object.assign(r, db.aplicar(r, a.data!));
         return { count: alvo.length };
+      },
+      upsert: async (a: Args & { create: Record<string, unknown>; update: Record<string, unknown> }) => {
+        const r = filtrar(a.where)[0];
+        if (r) {
+          Object.assign(r, db.aplicar(r, a.update), { updatedAt: new Date() });
+          return db.projetar(nome, r, a);
+        }
+        const row = { id: novoId(), createdAt: new Date(), updatedAt: new Date(), ...DEFAULTS[nome]?.(), ...db.normalizar(a.create) } as Row;
+        db.checarUnicos(nome, row);
+        rows().push(row);
+        return db.projetar(nome, row, a);
       },
       delete: async (a: Args) => {
         const r = filtrar(a.where)[0];
@@ -138,6 +162,20 @@ export class FakePrisma {
     };
   }
 
+  /** Como normalizar(), mas resolve { increment } / { decrement } sobre o valor atual */
+  aplicar(row: Row, data: Record<string, unknown>) {
+    const out = this.normalizar(data);
+    for (const [k, v] of Object.entries(out)) {
+      if (v && typeof v === 'object' && !(v instanceof Date) && !(v instanceof Prisma.Decimal)) {
+        const op = v as { increment?: number; decrement?: number };
+        const atual = new Prisma.Decimal((row[k] as Prisma.Decimal | number | undefined) ?? 0);
+        if (op.increment !== undefined) out[k] = atual.plus(op.increment);
+        else if (op.decrement !== undefined) out[k] = atual.minus(op.decrement);
+      }
+    }
+    return out;
+  }
+
   private normalizar(data: Record<string, unknown>) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(data)) {
@@ -148,9 +186,15 @@ export class FakePrisma {
   }
 
   private checarUnicos(nome: string, row: Row) {
-    const unicos: Record<string, string[]> = { user: ['email'], cliente: ['email', 'cpfHash'] };
+    const unicos: Record<string, string[]> = {
+      user: ['email'],
+      cliente: ['email', 'cpfHash'],
+      lead: ['clienteId'],
+    };
     for (const campo of unicos[nome] ?? []) {
-      if (this.linhas(nome).some((r) => r[campo] === row[campo])) {
+      // Como no Postgres, NULL não conflita com NULL
+      if (row[campo] === null || row[campo] === undefined) continue;
+      if (this.linhas(nome).some((r) => r.id !== row.id && r[campo] === row[campo])) {
         throw new Prisma.PrismaClientKnownRequestError('unique', {
           code: 'P2002', clientVersion: 'fake', meta: { target: [campo] },
         });
@@ -164,6 +208,10 @@ export class FakePrisma {
       if (cond === undefined) return true;
       if (k === 'OR') return (cond as Record<string, unknown>[]).some((w) => this.casa(nome, row, w));
       if (k === 'AND') return (cond as Record<string, unknown>[]).every((w) => this.casa(nome, row, w));
+      // Chave única composta do Prisma (ex.: clienteId_produtoId: { clienteId, produtoId })
+      if (k.includes('_') && !(k in row) && cond && typeof cond === 'object') {
+        return this.casa(nome, row, cond as Record<string, unknown>);
+      }
       const rel = RELACOES[nome]?.[k];
       if (rel) {
         const [tipo, tabela, fk] = rel;

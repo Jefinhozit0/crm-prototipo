@@ -10,7 +10,14 @@ import type {
   AuthUser,
   Cliente,
   ClienteDetalhado,
+  ConversaoLeadResult,
   DashboardResumo,
+  EstagioPipeline,
+  Lead,
+  LeadDetalhado,
+  Movimentacao,
+  SerieCarteira,
+  Responsavel,
   GenerateResult,
   Interacao,
   LeadBoardColumn,
@@ -255,5 +262,241 @@ export function useRecusarRecomendacao() {
       qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
+  });
+}
+
+// ----- Cadastros (clientes, leads, produtos) -----
+
+/** Payloads de escrita: só os campos que a API aceita em cada operação */
+export type ClienteCriarInput = {
+  nome: string;
+  email: string;
+  cpf: string;
+  telefone?: string;
+  cidade?: string;
+  uf?: string;
+  patrimonio?: number;
+  responsavelId?: string;
+};
+export type ClienteAtualizarInput = Partial<Omit<ClienteCriarInput, "cpf">> & {
+  status?: StatusCliente;
+};
+
+export type LeadCriarInput = {
+  nome: string;
+  email?: string;
+  telefone?: string;
+  origem: string;
+  valorEstimado?: number;
+  observacoes?: string;
+  responsavelId?: string;
+};
+export type LeadAtualizarInput = Partial<LeadCriarInput>;
+
+export type ConverterLeadInput = {
+  cpf: string;
+  nome?: string;
+  email?: string;
+  telefone?: string;
+  cidade?: string;
+  uf?: string;
+  patrimonio?: number;
+};
+
+export type ProdutoInput = {
+  nome: string;
+  emissor: string;
+  categoria: CategoriaProduto;
+  rentabilidadeAno: number;
+  risco: number;
+  tributacao: Produto["tributacao"];
+  perfilMinimo: PerfilInvestidor;
+  liquidez: string;
+  taxaAdmin?: number | null;
+  taxaPerformance?: number | null;
+  ticker?: string;
+  descricao?: string;
+  ativo?: boolean;
+};
+
+/** Assessores ativos — só ADMIN consulta (escolha do responsável) */
+export function useAssessores(enabled: boolean) {
+  return useQuery({
+    queryKey: ["usuarios", "assessores"],
+    queryFn: () => apiFetch<Responsavel[]>("/usuarios/assessores"),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+function useInvalidarClientes() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ["clientes"] });
+    qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+}
+
+export function useCriarCliente() {
+  const invalidar = useInvalidarClientes();
+  return useMutation({
+    mutationFn: (body: ClienteCriarInput) =>
+      apiFetch<Cliente>("/clientes", { method: "POST", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useAtualizarCliente(id: string) {
+  const invalidar = useInvalidarClientes();
+  return useMutation({
+    mutationFn: (body: ClienteAtualizarInput) =>
+      apiFetch<Cliente>(`/clientes/${id}`, { method: "PATCH", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useInativarCliente() {
+  const invalidar = useInvalidarClientes();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ id: string; inativado: true }>(`/clientes/${id}`, { method: "DELETE" }),
+    onSuccess: invalidar,
+  });
+}
+
+export const LEAD_KEY = "lead" as const;
+
+export function useLead(id: string | null) {
+  return useQuery({
+    queryKey: [LEAD_KEY, id],
+    queryFn: () => apiFetch<LeadDetalhado>(`/leads/${id}`),
+    enabled: !!id,
+  });
+}
+
+function useInvalidarLeads() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ["leads"] });
+    qc.invalidateQueries({ queryKey: [LEAD_KEY] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+}
+
+export function useCriarLead() {
+  const invalidar = useInvalidarLeads();
+  return useMutation({
+    mutationFn: (body: LeadCriarInput) => apiFetch<Lead>("/leads", { method: "POST", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useAtualizarLead(id: string) {
+  const invalidar = useInvalidarLeads();
+  return useMutation({
+    mutationFn: (body: LeadAtualizarInput) =>
+      apiFetch<Lead>(`/leads/${id}`, { method: "PATCH", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useMoverEstagio(id: string) {
+  const invalidar = useInvalidarLeads();
+  return useMutation({
+    mutationFn: (body: { estagio: EstagioPipeline; notas?: string }) =>
+      apiFetch<Lead>(`/leads/${id}/mover-estagio`, { method: "POST", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useExcluirLead() {
+  const invalidar = useInvalidarLeads();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ id: string; deleted: true }>(`/leads/${id}`, { method: "DELETE" }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useConverterLead(id: string) {
+  const invalidarLeads = useInvalidarLeads();
+  const invalidarClientes = useInvalidarClientes();
+  return useMutation({
+    mutationFn: (body: ConverterLeadInput) =>
+      apiFetch<ConversaoLeadResult>(`/leads/${id}/converter`, { method: "POST", body }),
+    onSuccess: () => {
+      invalidarLeads();
+      invalidarClientes();
+    },
+  });
+}
+
+function useInvalidarProdutos() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: ["produtos"] });
+}
+
+export function useCriarProduto() {
+  const invalidar = useInvalidarProdutos();
+  return useMutation({
+    mutationFn: (body: ProdutoInput) => apiFetch<Produto>("/produtos", { method: "POST", body }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useAtualizarProduto() {
+  const invalidar = useInvalidarProdutos();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<ProdutoInput> & { id: string }) =>
+      apiFetch<Produto>(`/produtos/${id}`, { method: "PATCH", body }),
+    onSuccess: invalidar,
+  });
+}
+
+// ----- Carteira (movimentações e evolução) -----
+
+export type MovimentacaoInput = {
+  tipo: "APLICACAO" | "RESGATE";
+  produtoId: string;
+  valor: number;
+  /** ISO; omitido = agora */
+  data?: string;
+  observacao?: string;
+  recomendacaoId?: string;
+  cienciaDesenquadramento?: boolean;
+};
+
+export const MOVIMENTACOES_KEY = "movimentacoes" as const;
+
+export function useMovimentacoes(clienteId: string, filters: { page?: number; limit?: number } = {}) {
+  return useQuery({
+    queryKey: [MOVIMENTACOES_KEY, clienteId, filters],
+    queryFn: () =>
+      apiFetch<Page<Movimentacao>>(`/clientes/${clienteId}/movimentacoes`, { query: filters }),
+  });
+}
+
+export function useRegistrarMovimentacao(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MovimentacaoInput) =>
+      apiFetch<Movimentacao>(`/clientes/${clienteId}/movimentacoes`, { method: "POST", body }),
+    onSuccess: () => {
+      // Posição, status do cliente, recomendação (ATIVA) e dashboard mudam juntos
+      qc.invalidateQueries({ queryKey: [MOVIMENTACOES_KEY, clienteId] });
+      qc.invalidateQueries({ queryKey: [CLIENTE_DETALHADO_KEY] });
+      qc.invalidateQueries({ queryKey: ["clientes"] });
+      qc.invalidateQueries({ queryKey: [RECOMENDACOES_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["carteira"] });
+    },
+  });
+}
+
+export function useSerieCarteira(meses = 12) {
+  return useQuery({
+    queryKey: ["carteira", "series", meses],
+    queryFn: () => apiFetch<SerieCarteira>("/carteira/series", { query: { meses } }),
   });
 }

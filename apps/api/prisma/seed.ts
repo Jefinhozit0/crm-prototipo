@@ -16,6 +16,8 @@ import {
   TipoInteracao,
   AcaoAuditoria,
   Tributacao,
+  TipoMovimentacao,
+  type Prisma,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { hashCpf } from '../src/clientes/cpf';
@@ -50,6 +52,7 @@ async function main() {
   // Ordem importa por causa das FKs
   await prisma.auditoria.deleteMany();
   await prisma.interacao.deleteMany();
+  await prisma.movimentacao.deleteMany();
   await prisma.recomendacao.deleteMany();
   await prisma.posicao.deleteMany();
   await prisma.suitability.deleteMany();
@@ -495,17 +498,37 @@ async function main() {
     { c: 4, p: 1, v: 800_000 },   // Tesouro IPCA+
   ];
 
-  await Promise.all(
-    posicoes.map((pos) =>
-      prisma.posicao.create({
-        data: {
-          clienteId: clientes[pos.c].id,
-          produtoId: produtos[pos.p].id,
-          valor: pos.v,
-        },
-      }),
-    ),
-  );
+  // Histórico de movimentações que soma exatamente cada posição (invariante
+  // posição = Σ movimentações): saldo inicial há 11 meses, duas aplicações e,
+  // em metade das posições, um resgate parcial. Alimenta os gráficos do dashboard.
+  const mesesAtras = (n: number, dia = 10) => {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - n, dia);
+    d.setUTCHours(15, 0, 0, 0);
+    return d;
+  };
+  const movimentacoes: Prisma.MovimentacaoCreateManyInput[] = [];
+  const posicoesCriadas = posicoes.map((pos, i) => {
+    const clienteId = clientes[pos.c].id;
+    const produtoId = produtos[pos.p].id;
+    const saldo = Math.round(pos.v * 0.6);
+    const aplicacao1 = Math.round(pos.v * 0.25);
+    const resgate = i % 2 === 0 ? Math.round(pos.v * 0.05) : 0;
+    const aplicacao2 = pos.v - saldo - aplicacao1 + resgate;
+    const base = { clienteId, produtoId, registradoPorId: clientes[pos.c].responsavelId };
+    movimentacoes.push(
+      { ...base, tipo: TipoMovimentacao.SALDO_INICIAL, valor: saldo, data: mesesAtras(11, 5), registradoPorId: null },
+      { ...base, tipo: TipoMovimentacao.APLICACAO, valor: aplicacao1, data: mesesAtras(7 - (i % 3)) },
+      { ...base, tipo: TipoMovimentacao.APLICACAO, valor: aplicacao2, data: mesesAtras(3 - (i % 3), 20) },
+    );
+    if (resgate > 0) {
+      movimentacoes.push({ ...base, tipo: TipoMovimentacao.RESGATE, valor: resgate, data: mesesAtras(1, 15) });
+    }
+    return { clienteId, produtoId, valor: pos.v, adquiridoEm: mesesAtras(11, 5) };
+  });
+
+  await prisma.posicao.createMany({ data: posicoesCriadas });
+  await prisma.movimentacao.createMany({ data: movimentacoes });
 
   // Uma recomendação já aprovada pra a tela não nascer 100% vazia.
   await prisma.recomendacao.create({
@@ -575,6 +598,7 @@ async function main() {
   console.log(`   Suitabilities: ${clientes.length}`);
   console.log(`   Recomendações: 3`);
   console.log(`   Interações:    3`);
+  console.log(`   Movimentações: ${movimentacoes.length}`);
 }
 
 main()

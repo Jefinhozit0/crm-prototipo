@@ -327,6 +327,16 @@ describe('API (e2e com banco em memória)', () => {
       expect(res.body.dependencias.aiEngine.ok).toBe(true);
     });
 
+    it('corpo acima do limite → 413 (não 500) e JSON malformado → 400', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const grande = await agent
+        .post('/api/leads')
+        .send({ nome: 'x'.repeat(150_000), origem: 'Teste' })
+        .expect(413);
+      expect(grande.body).toMatchObject({ statusCode: 413, message: 'Corpo da requisição grande demais' });
+      await agent.post('/api/leads').set('Content-Type', 'application/json').send('{"nome":').expect(400);
+    });
+
     it('id de rota malformado → 400 antes de tocar o banco', async () => {
       const agent = await logar(c, 'admin@ce.com');
       await agent.get('/api/clientes/1%20OR%201=1').expect(400);
@@ -402,6 +412,17 @@ describe('API (e2e com banco em memória)', () => {
       expect(res.body).toEqual({ id: c.clienteJoao.id, inativado: true });
       expect(c.prisma.linhas('cliente').find((x) => x.id === c.clienteJoao.id)?.status).toBe('INATIVO');
       expect(c.prisma.linhas('suitability')).toHaveLength(1);
+    });
+
+    it('assessor não inativa nem reativa cliente por PATCH de status', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'INATIVO' }).expect(403);
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'BLOQUEADO' }).expect(200);
+
+      const admin = await logar(c, 'admin@ce.com');
+      await admin.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'INATIVO' }).expect(200);
+      await joao.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'ATIVO' }).expect(403);
+      await admin.patch(`/api/clientes/${c.clienteJoao.id}`).send({ status: 'ATIVO' }).expect(200);
     });
 
     it('detalhado registra acesso a dado sensível', async () => {
@@ -597,6 +618,231 @@ describe('API (e2e com banco em memória)', () => {
       await agent.patch(`/api/leads/${lead.id}`).send({ estagio: 'FECHADO' }).expect(400);
       await agent.post(`/api/leads/${lead.id}/mover-estagio`).send({ estagio: 'PROPOSTA' }).expect(200);
       expect(c.prisma.linhas('estagioHistorico').map((h) => h.estagio)).toEqual(['PROSPECCAO', 'PROPOSTA']);
+    });
+
+    it('conversão cria o cliente, fecha o lead e audita, tudo na mesma transação', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const lead = (
+        await agent
+          .post('/api/leads')
+          .send({ nome: 'Lia Convertida', email: 'lia@x.com', origem: 'Evento', valorEstimado: 750000 })
+          .expect(201)
+      ).body;
+
+      const res = await agent
+        .post(`/api/leads/${lead.id}/converter`)
+        .send({ cpf: '529.982.247-25', uf: 'sp' })
+        .expect(201);
+
+      // Nome, e-mail e patrimônio herdados do lead; responsável idem
+      expect(res.body.cliente).toMatchObject({
+        nome: 'Lia Convertida',
+        email: 'lia@x.com',
+        patrimonio: 750000,
+        uf: 'SP',
+        status: 'PROSPECTO',
+        responsavelId: c.joao.id,
+      });
+      expect(res.body.cliente).not.toHaveProperty('cpfHash');
+      expect(res.body.lead).toMatchObject({ estagio: 'FECHADO', clienteId: res.body.cliente.id });
+      expect(res.body.lead.cliente).toEqual({ id: res.body.cliente.id, nome: 'Lia Convertida' });
+      expect(c.prisma.linhas('estagioHistorico').at(-1)).toMatchObject({ estagio: 'FECHADO', notas: 'Convertido em cliente' });
+
+      const criacao = auditorias(c, 'CRIACAO').find((a) => a.entidade === 'Cliente');
+      expect(criacao?.diff).toMatchObject({ origemLeadId: lead.id });
+      expect(JSON.stringify(auditorias(c))).not.toContain('52998224725');
+
+      // Segunda conversão, mudança de estágio e exclusão ficam bloqueadas
+      await agent.post(`/api/leads/${lead.id}/converter`).send({ cpf: '11144477735' }).expect(409);
+      await agent.post(`/api/leads/${lead.id}/mover-estagio`).send({ estagio: 'PROPOSTA' }).expect(409);
+      await agent.delete(`/api/leads/${lead.id}`).expect(409);
+    });
+
+    it('conversão com CPF duplicado não altera nada (rollback)', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      await agent.post('/api/clientes').send({ nome: 'Já Existe', email: 'ja@x.com', cpf: '52998224725' }).expect(201);
+      const lead = (await agent.post('/api/leads').send({ nome: 'Lead Dup', email: 'dup@x.com', origem: 'Inbound' })).body;
+      const clientesAntes = c.prisma.linhas('cliente').length;
+
+      await agent.post(`/api/leads/${lead.id}/converter`).send({ cpf: '52998224725' }).expect(409);
+
+      expect(c.prisma.linhas('cliente')).toHaveLength(clientesAntes);
+      const depois = c.prisma.linhas('lead').find((l) => l.id === lead.id);
+      expect(depois).toMatchObject({ estagio: 'PROSPECCAO', clienteId: null });
+    });
+
+    it('conversão exige e-mail quando o lead não tem, recusa lead perdido e respeita o escopo', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const semEmail = (await joao.post('/api/leads').send({ nome: 'Sem Email', origem: 'Inbound' })).body;
+      await joao.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725' }).expect(422);
+
+      await joao.post(`/api/leads/${semEmail.id}/mover-estagio`).send({ estagio: 'PERDIDO' }).expect(200);
+      await joao
+        .post(`/api/leads/${semEmail.id}/converter`)
+        .send({ cpf: '52998224725', email: 'a@x.com' })
+        .expect(422);
+
+      const marina = await logar(c, 'marina@ce.com');
+      await marina.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725', email: 'a@x.com' }).expect(404);
+      const leitor = await logar(c, 'leitor@ce.com');
+      await leitor.post(`/api/leads/${semEmail.id}/converter`).send({ cpf: '52998224725', email: 'a@x.com' }).expect(403);
+    });
+
+    it('conversão rejeita campos que não podem vir do formulário', async () => {
+      const agent = await logar(c, 'joao@ce.com');
+      const lead = (await agent.post('/api/leads').send({ nome: 'Lead P', email: 'p@x.com', origem: 'Inbound' })).body;
+      await agent
+        .post(`/api/leads/${lead.id}/converter`)
+        .send({ cpf: '52998224725', perfil: 'AGRESSIVO' })
+        .expect(400);
+    });
+  });
+
+  describe('carteira (movimentações)', () => {
+    const posicao = (clienteId: string, produtoId: string) =>
+      c.prisma.linhas('posicao').find((p) => p.clienteId === clienteId && p.produtoId === produtoId);
+    const valorDe = (row?: Record<string, unknown>) => (row ? Number(String(row.valor)) : undefined);
+
+    it('aplicação soma na posição existente; resgate subtrai; resgate total encerra a posição', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const url = `/api/clientes/${c.clienteJoao.id}/movimentacoes`;
+
+      const apl = await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 50_000.5 }).expect(201);
+      expect(apl.body).toMatchObject({ tipo: 'APLICACAO', valor: 50_000.5, desenquadrada: false, registradoPor: { nome: 'João Diniz' } });
+      expect(valorDe(posicao(c.clienteJoao.id, c.cdb.id))).toBe(250_000.5);
+
+      await joao.post(url).send({ tipo: 'RESGATE', produtoId: c.cdb.id, valor: 300_000 }).expect(422);
+      expect(valorDe(posicao(c.clienteJoao.id, c.cdb.id))).toBe(250_000.5);
+
+      await joao.post(url).send({ tipo: 'RESGATE', produtoId: c.cdb.id, valor: 250_000.5 }).expect(201);
+      expect(posicao(c.clienteJoao.id, c.cdb.id)).toBeUndefined();
+
+      const lista = await joao.get(url).expect(200);
+      expect(lista.body.meta.total).toBe(2);
+      const aud = auditorias(c, 'CRIACAO').filter((a) => a.entidade === 'Movimentacao');
+      expect(aud).toHaveLength(2);
+    });
+
+    it('resgate sem posição → 422; valor inválido, data futura e SALDO_INICIAL → 400', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const url = `/api/clientes/${c.clienteJoao.id}/movimentacoes`;
+      const r = await joao.post(url).send({ tipo: 'RESGATE', produtoId: c.acoes.id, valor: 10 }).expect(422);
+      expect(r.body.message).toMatch(/não tem posição/);
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 0 }).expect(400);
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10.555 }).expect(400);
+      const futuro = new Date(Date.now() + 86_400_000).toISOString();
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10, data: futuro }).expect(400);
+      await joao.post(url).send({ tipo: 'SALDO_INICIAL', produtoId: c.cdb.id, valor: 10 }).expect(400);
+    });
+
+    it('produto acima do perfil exige ciência do cliente e fica marcado como desenquadrado', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const url = `/api/clientes/${c.clienteJoao.id}/movimentacoes`;
+      // Cliente MODERADO, fundo exige ARROJADO
+      const sem = await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.acoes.id, valor: 1000 }).expect(422);
+      expect(sem.body).toMatchObject({ code: 'DESENQUADRAMENTO' });
+      expect(sem.body.message).toMatch(/acima do perfil/);
+      expect(posicao(c.clienteJoao.id, c.acoes.id)).toBeUndefined();
+
+      const com = await joao
+        .post(url)
+        .send({ tipo: 'APLICACAO', produtoId: c.acoes.id, valor: 1000, cienciaDesenquadramento: true })
+        .expect(201);
+      expect(com.body.desenquadrada).toBe(true);
+      const aud = auditorias(c, 'CRIACAO').find((a) => a.entidadeId === com.body.id);
+      expect(aud?.diff).toMatchObject({ desenquadrada: true });
+    });
+
+    it('cliente sem suitability: aplicação também exige ciência', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const r = await joao
+        .post(`/api/clientes/${c.clienteSemSuit.id}/movimentacoes`)
+        .send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 1000 })
+        .expect(422);
+      expect(r.body.message).toMatch(/não tem suitability/);
+    });
+
+    it('primeira aplicação torna o prospecto ativo; inativo não aplica; bloqueado não movimenta', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const prospecto = await c.prisma.cliente.create({
+        data: { nome: 'Pedro Prospecto', email: 'pedro@cliente.com', cpfHash: 'h1:p', cpfMasked: 'x', status: 'PROSPECTO', responsavelId: c.joao.id },
+      }) as { id: string };
+      await joao
+        .post(`/api/clientes/${prospecto.id}/movimentacoes`)
+        .send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 1000, cienciaDesenquadramento: true })
+        .expect(201);
+      expect(c.prisma.linhas('cliente').find((x) => x.id === prospecto.id)?.status).toBe('ATIVO');
+
+      const linha = c.prisma.linhas('cliente').find((x) => x.id === prospecto.id)!;
+      linha.status = 'INATIVO';
+      await joao
+        .post(`/api/clientes/${prospecto.id}/movimentacoes`)
+        .send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 1000, cienciaDesenquadramento: true })
+        .expect(422);
+      // Inativo ainda pode resgatar o que tem
+      await joao.post(`/api/clientes/${prospecto.id}/movimentacoes`).send({ tipo: 'RESGATE', produtoId: c.cdb.id, valor: 500 }).expect(201);
+
+      // A transação que falhou acima restaurou um snapshot: buscar a linha de novo
+      c.prisma.linhas('cliente').find((x) => x.id === prospecto.id)!.status = 'BLOQUEADO';
+      await joao.post(`/api/clientes/${prospecto.id}/movimentacoes`).send({ tipo: 'RESGATE', produtoId: c.cdb.id, valor: 100 }).expect(422);
+    });
+
+    it('aplicação vinculada a recomendação aprovada a marca como ATIVA, uma única vez', async () => {
+      const joao = await logar(c, 'joao@ce.com');
+      const rec = await c.prisma.recomendacao.create({
+        data: { clienteId: c.clienteJoao.id, produtoId: c.cdb.id, score: 0.8, justificativa: 'x', payload: {}, status: 'APROVADA' },
+      }) as { id: string };
+      const url = `/api/clientes/${c.clienteJoao.id}/movimentacoes`;
+
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.acoes.id, valor: 10, recomendacaoId: rec.id, cienciaDesenquadramento: true }).expect(422);
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10, recomendacaoId: rec.id }).expect(201);
+      expect(c.prisma.linhas('recomendacao').find((r) => r.id === rec.id)?.status).toBe('ATIVA');
+      await joao.post(url).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10, recomendacaoId: rec.id }).expect(409);
+    });
+
+    it('escopo: assessor não movimenta nem lista carteira de outro; leitura não registra', async () => {
+      const marina = await logar(c, 'marina@ce.com');
+      await marina.post(`/api/clientes/${c.clienteJoao.id}/movimentacoes`).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10 }).expect(404);
+      await marina.get(`/api/clientes/${c.clienteJoao.id}/movimentacoes`).expect(404);
+      const leitor = await logar(c, 'leitor@ce.com');
+      await leitor.get(`/api/clientes/${c.clienteJoao.id}/movimentacoes`).expect(200);
+      await leitor.post(`/api/clientes/${c.clienteJoao.id}/movimentacoes`).send({ tipo: 'APLICACAO', produtoId: c.cdb.id, valor: 10 }).expect(403);
+    });
+
+    it('série mensal: patrimônio aplicado acumulado e captação, sem contar saldo inicial; respeita escopo', async () => {
+      const agora = new Date();
+      const mesesAtras = (n: number) => new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - n, 15, 12));
+      const mov = (clienteId: string, tipo: string, valor: number, data: Date) =>
+        c.prisma.movimentacao.create({ data: { clienteId, produtoId: c.cdb.id, tipo, valor, data } });
+      await mov(c.clienteJoao.id, 'SALDO_INICIAL', 1000, mesesAtras(14)); // antes da janela
+      await mov(c.clienteJoao.id, 'APLICACAO', 500, mesesAtras(2));
+      await mov(c.clienteJoao.id, 'RESGATE', 200, mesesAtras(1));
+      await mov(c.clienteMarina.id, 'APLICACAO', 9999, mesesAtras(1)); // fora do escopo do João
+
+      const joao = await logar(c, 'joao@ce.com');
+      const res = await joao.get('/api/carteira/series?meses=3').expect(200);
+      expect(res.body.base).toBe('custo');
+      expect(res.body.meses.map((m: { patrimonioAplicado: number }) => m.patrimonioAplicado)).toEqual([1500, 1300, 1300]);
+      expect(res.body.meses[0]).toMatchObject({ entradas: 500, saidas: 0, captacaoLiquida: 500 });
+      expect(res.body.meses[1]).toMatchObject({ entradas: 0, saidas: 200, captacaoLiquida: -200 });
+      expect(res.body.meses[2].mes).toMatch(/^\d{4}-\d{2}$/);
+
+      const admin = await logar(c, 'admin@ce.com');
+      const todos = await admin.get('/api/carteira/series?meses=3').expect(200);
+      expect(todos.body.meses[1].entradas).toBe(9999);
+      await admin.get('/api/carteira/series?meses=99').expect(400);
+    });
+  });
+
+  describe('usuários', () => {
+    it('lista de assessores só para ADMIN e sem dados de credencial', async () => {
+      const admin = await logar(c, 'admin@ce.com');
+      const res = await admin.get('/api/usuarios/assessores').expect(200);
+      expect(res.body.map((u: { nome: string }) => u.nome)).toEqual(['João Diniz', 'Marina Lopes']);
+      expect(Object.keys(res.body[0]).sort()).toEqual(['email', 'id', 'nome']);
+
+      const joao = await logar(c, 'joao@ce.com');
+      await joao.get('/api/usuarios/assessores').expect(403);
     });
   });
 });

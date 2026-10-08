@@ -1,9 +1,12 @@
 import type {
   CategoriaProduto,
+  EstagioPipeline,
   PerfilInvestidor,
   StatusCliente,
   StatusRecomendacao,
   TipoInteracao,
+  TipoMovimentacao,
+  Tributacao,
 } from "@/types/api";
 
 export const perfilLabel: Record<PerfilInvestidor, string> = {
@@ -29,6 +32,24 @@ export const categoriaLabel: Record<CategoriaProduto, string> = {
   ESTRUTURADOS: "Estruturados",
   CAMBIO: "Câmbio",
 };
+
+export const tributacaoLabel: Record<Tributacao, string> = {
+  TRIBUTADO: "Tributado (IR regressivo)",
+  ISENTO: "Isento de IR",
+  INCENTIVADO: "Incentivado (isento PF)",
+};
+
+export const estagioLabel: Record<EstagioPipeline, string> = {
+  PROSPECCAO: "Prospecção",
+  QUALIFICACAO: "Qualificação",
+  PROPOSTA: "Proposta",
+  NEGOCIACAO: "Negociação",
+  FECHADO: "Fechado",
+  PERDIDO: "Perdido",
+};
+
+/** Sugestões do campo origem do lead (o campo aceita texto livre) */
+export const ORIGENS_LEAD = ["Indicação", "Inbound", "Evento", "LinkedIn"] as const;
 
 export const statusClienteLabel: Record<StatusCliente, string> = {
   ATIVO: "Ativo",
@@ -56,3 +77,17 @@ export const tipoInteracaoLabel: Record<TipoInteracao, string> = {
 
 export const AVISO_APOIO_DECISAO =
   "Recomendações são apoio à decisão. A decisão final é do assessor e está sujeita aos controles internos e de compliance.";
+
+/** Ordem dos perfis (mesma da API: apps/api/src/recomendacoes/regras.ts) */
+export const perfilOrdem: Record<PerfilInvestidor, number> = {
+  CONSERVADOR: 0,
+  MODERADO: 1,
+  ARROJADO: 2,
+  AGRESSIVO: 3,
+};
+
+export const tipoMovimentacaoLabel: Record<TipoMovimentacao, string> = {
+  SALDO_INICIAL: "Saldo inicial",
+  APLICACAO: "Aplicação",
+  RESGATE: "Resgate",
+};

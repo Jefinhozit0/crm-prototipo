@@ -15,7 +15,7 @@ CRM de wealth management com motor de recomendação explicável.
 |---|---|
 | Frontend | Next.js 16 · React 19 · TypeScript · Tailwind v4 · shadcn/ui (Base UI) |
 | Estado / data | TanStack Query |
-| Backend transacional | NestJS 10 · TypeScript · Zod |
+| Backend transacional | NestJS 11 (Express 5) · TypeScript · Zod |
 | Motor de recomendação | Python 3.11+ · FastAPI · Pydantic (regras + ranker LightGBM opcional) |
 | ORM / Banco | Prisma 5 · PostgreSQL |
 | Auth | JWT em cookies httpOnly, refresh token com rotação e revogação |
@@ -106,18 +106,31 @@ cd apps/ai-engine && pytest -q
 Os testes da API sobem a aplicação Nest real (guards, pipes, filtros, cookies) com o
 Prisma trocado por um banco em memória — não precisam de Postgres.
 
+O CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) roda em todo PR e push na
+`main`: os comandos acima, `npm audit --omit=dev` (falha em vulnerabilidade alta ou crítica
+de produção), as migrações do zero num PostgreSQL real com checagem de drift contra o
+`schema.prisma` e o seed, e o pytest do motor.
+
 ## Endpoints principais
 
 | Método | Rota | Quem |
 |---|---|---|
 | POST | `/api/auth/login` · `/refresh` · `/logout` | público |
 | GET | `/api/clientes` · `/:id` · `/:id/detalhado` | autenticado (escopo) |
-| POST/PATCH | `/api/clientes` · `/:id` | ADMIN, ASSESSOR |
+| POST/PATCH | `/api/clientes` · `/:id` | ADMIN, ASSESSOR (entrar/sair de INATIVO: só ADMIN) |
 | DELETE | `/api/clientes/:id` (inativa — não apaga) | ADMIN |
+| GET | `/api/leads` · `/board` · `/:id` | autenticado (escopo) |
+| POST/PATCH/DELETE | `/api/leads` · `/:id` · `/:id/mover-estagio` | ADMIN, ASSESSOR |
+| POST | `/api/leads/:id/converter` (cria o cliente e fecha o lead, numa transação) | ADMIN, ASSESSOR |
+| GET | `/api/produtos` · `/:id` | autenticado |
+| POST/PATCH/DELETE | `/api/produtos` · `/:id` (DELETE desativa) | ADMIN |
+| GET | `/api/usuarios/assessores` | ADMIN |
 | GET/POST | `/api/suitability` · `/questionario` · `/cliente/:id` | leitura: todos · aplicar: ADMIN, ASSESSOR |
 | POST | `/api/recomendacoes/generate` | ADMIN, ASSESSOR |
 | PATCH | `/api/recomendacoes/:id/aprovar` · `/recusar` | ADMIN, ASSESSOR |
-| GET | `/api/dashboard/resumo` · `/api/interacoes` | autenticado (escopo) |
+| GET | `/api/dashboard/resumo` · `/api/interacoes` · `/api/carteira/series` | autenticado (escopo) |
+| GET | `/api/clientes/:id/movimentacoes` | autenticado (escopo) |
+| POST | `/api/clientes/:id/movimentacoes` (aplicação/resgate; atualiza a posição na mesma transação) | ADMIN, ASSESSOR |
 | GET | `/api/auditoria` | ADMIN, COMPLIANCE |
 | GET | `/api/health/live` · `/ready` (público) · `/api/health` (ADMIN) | — |
 

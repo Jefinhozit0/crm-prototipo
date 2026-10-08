@@ -59,11 +59,12 @@ describe("Histórico de interações (dados reais, sem mock)", () => {
 });
 
 describe("Dashboard", () => {
-  it("KPIs vêm da API; séries históricas aparecem marcadas como demonstrativas", async () => {
+  it("KPIs e séries vêm da API; nenhum dado demonstrativo sobra", async () => {
     mockApi({
       "GET /api/auth/me": usuario(),
       "GET /api/dashboard/resumo": {
         aumTotal: 32_400_000,
+        patrimonioDeclarado: 40_000_000,
         clientesAtivos: 4,
         leadsAbertos: 3,
         valorPipeline: 5_350_000,
@@ -77,13 +78,26 @@ describe("Dashboard", () => {
         ],
       },
       "GET /api/interacoes": pagina([]),
+      "GET /api/carteira/series": {
+        base: "custo",
+        meses: [
+          { mes: "2026-09", patrimonioAplicado: 1_000_000, entradas: 1_000_000, saidas: 0, captacaoLiquida: 1_000_000 },
+          { mes: "2026-10", patrimonioAplicado: 900_000, entradas: 0, saidas: 100_000, captacaoLiquida: -100_000 },
+        ],
+      },
     });
-    renderComQuery(<DashboardPage />);
+    const { container } = renderComQuery(<DashboardPage />);
 
     expect(await screen.findByText("R$ 32.400.000")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /sem suitability válida/ })).toHaveTextContent(/^1 cliente/);
-    // Os dois gráficos sem fonte real no banco levam o selo
-    expect(screen.getAllByText("Dados demonstrativos")).toHaveLength(2);
+    expect(screen.getByText(/patrimônio declarado: R\$ 40\.000\.000/)).toBeInTheDocument();
+    // Séries reais: a tabela acessível traz os meses e os valores da API
+    const tabela = await screen.findByRole("table", { name: "Evolução mensal da carteira" });
+    expect(tabela).toHaveTextContent("set/26");
+    expect(tabela).toHaveTextContent("−R$ 100.000");
+    expect(screen.queryByText("Dados demonstrativos")).not.toBeInTheDocument();
+    // Formato das antigas séries fictícias ("R$ 184 mi")
+    expect(container).not.toHaveTextContent(/R\$ \d+ mi\b/);
     // Nenhum dado fictício antigo (mock) sobrou na tela
     expect(screen.queryByText(/184\.320\.000/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Tarefas do dia/)).not.toBeInTheDocument();

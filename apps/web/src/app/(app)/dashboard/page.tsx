@@ -31,8 +31,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState, TableSkeleton } from "@/components/query-states";
-import { useDashboardResumo, useInteracoes } from "@/lib/queries";
-import { aumSerieDemo, captacaoSerieDemo } from "@/lib/dados-demonstrativos";
+import { useDashboardResumo, useInteracoes, useSerieCarteira } from "@/lib/queries";
 import { perfilLabel, tipoInteracaoLabel } from "@/lib/labels";
 import { fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -41,6 +40,7 @@ import { DashboardCharts } from "./_components/dashboard-charts";
 export default function DashboardPage() {
   const resumo = useDashboardResumo();
   const interacoes = useInteracoes({ limit: 5 });
+  const serie = useSerieCarteira(12);
   const r = resumo.data;
 
   return (
@@ -67,11 +67,11 @@ export default function DashboardPage() {
           ) : (
             <>
               <KpiCard
-                label="AUM total"
+                label="AUM"
                 value={fmt.brl(r.aumTotal)}
                 icon={DollarSign}
                 tone="blue"
-                hint="Patrimônio dos clientes ativos"
+                hint={`Aplicado na casa, a custo · patrimônio declarado: ${fmt.brl(r.patrimonioDeclarado)}`}
               />
               <KpiCard label="Clientes ativos" value={String(r.clientesAtivos)} icon={Users} tone="emerald" />
               <KpiCard
@@ -94,8 +94,8 @@ export default function DashboardPage() {
       )}
 
       <DashboardCharts
-        aumSerie={aumSerieDemo}
-        captacaoSerie={captacaoSerieDemo}
+        serie={serie.data?.meses ?? null}
+        erroSerie={serie.error?.message}
         distribuicaoPerfil={
           r ? r.distribuicaoPerfil.map((p) => ({ ...p, perfil: perfilLabel[p.perfil] })) : null
         }
